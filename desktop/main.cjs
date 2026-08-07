@@ -12,7 +12,11 @@ let mainWindow = null;
 let backendProcess = null;
 
 app.setName('Créateur d’AO');
-if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_ID);
+  const localRoot = process.env.LOCALAPPDATA || app.getPath('appData');
+  app.setPath('userData', path.join(localRoot, 'CreateurAO', 'data'));
+}
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
