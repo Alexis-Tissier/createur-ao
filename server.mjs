@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildFolderName, createFolderTree, normalizeTree, sanitizeSegment } from './lib/folders.mjs';
+import { buildFolderName, createFolderTree, normalizeTree, sanitizeSegment, writeContactsFile } from './lib/folders.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const ROOT = path.dirname(__filename);
@@ -265,7 +265,7 @@ app.post('/api/offers', async (req, res) => {
       title: sanitizeSegment(req.body?.title),
       commercial: sanitizeSegment(req.body?.commercial, { upper: true }),
       quoteNumber: sanitizeSegment(req.body?.quoteNumber, { upper: true }),
-      contact: String(req.body?.contact ?? '').trim()
+      contact: String(req.body?.contact ?? '')
     };
 
     const folderName = buildFolderName(payload);
@@ -277,6 +277,7 @@ app.post('/api/offers', async (req, res) => {
       folderName,
       tree
     });
+    await writeContactsFile({ fs: fsp, rootPath: finalPath, contact: payload.contact });
 
     const insert = db.prepare(`
       INSERT INTO offers (
