@@ -1,4 +1,4 @@
-name: Publish v0.3.1 release
+name: Clean v0.3.1 release
 
 on:
   push:
@@ -11,77 +11,18 @@ permissions:
   contents: write
 
 jobs:
-  release-windows:
-    runs-on: windows-latest
-    timeout-minutes: 35
-
+  clean-release:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Validate
-        run: npm run check
-
-      - name: Build Windows executables
-        run: npm run dist:win
-
-      - name: Prepare server distribution
-        shell: powershell
-        run: |
-          $serverRoot = "release/server-package"
-          $appRoot = "$serverRoot/Createur-AO-win-x64"
-          Remove-Item $serverRoot -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path $appRoot -Force | Out-Null
-          Copy-Item "release/win-unpacked/*" $appRoot -Recurse -Force
-          Copy-Item "windows/Lancer-Createur-AO.cmd" $serverRoot -Force
-          Compress-Archive -Path "$serverRoot/*" -DestinationPath "release/Createur-AO-Serveur-v0.3.1.zip" -Force
-
-      - name: Generate SHA-256 checksums
-        shell: powershell
-        run: |
-          $files = @(
-            "release/Createur-AO-portable.exe",
-            "release/Createur-AO-Setup.exe",
-            "release/Createur-AO-Serveur-v0.3.1.zip"
-          )
-          $lines = foreach ($file in $files) {
-            $hash = (Get-FileHash $file -Algorithm SHA256).Hash.ToLower()
-            "$hash  $([System.IO.Path]::GetFileName($file))"
-          }
-          $lines | Set-Content "release/SHA256SUMS-v0.3.1.txt" -Encoding ascii
-
-      - name: Publish GitHub Release
-        shell: powershell
+      - name: Simplify GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          @"
-          Créateur d'AO v0.3.1
+          gh release edit v0.3.1 \
+            --repo "${{ github.repository }}" \
+            --title "Créateur d'AO v0.3.1" \
+            --notes ""
 
-          Correctif Windows : démarrage du service interne dans l'application installée.
-          Aucun Node.js externe n'est nécessaire.
-
-          Fichiers :
-          - Createur-AO-Setup.exe : installation utilisateur sans droits administrateur
-          - Createur-AO-portable.exe : version portable
-          - Createur-AO-Serveur-v0.3.1.zip : distribution depuis un partage réseau
-          - SHA256SUMS-v0.3.1.txt : empreintes SHA-256
-          "@ | Set-Content release/RELEASE_NOTES.md -Encoding utf8
-
-          gh release create v0.3.1 `
-            "release/Createur-AO-Setup.exe" `
-            "release/Createur-AO-portable.exe" `
-            "release/Createur-AO-Serveur-v0.3.1.zip" `
-            "release/SHA256SUMS-v0.3.1.txt" `
-            --target "${{ github.sha }}" `
-            --title "Créateur d'AO v0.3.1" `
-            --notes-file "release/RELEASE_NOTES.md" `
-            --repo "${{ github.repository }}"
+          gh release delete-asset v0.3.1 Createur-AO-portable.exe --yes --repo "${{ github.repository }}" || true
+          gh release delete-asset v0.3.1 Createur-AO-Serveur-v0.3.1.zip --yes --repo "${{ github.repository }}" || true
+          gh release delete-asset v0.3.1 SHA256SUMS-v0.3.1.txt --yes --repo "${{ github.repository }}" || true
