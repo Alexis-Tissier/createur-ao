@@ -1,0 +1,87 @@
+{
+  "name": "createur-ao",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Création normalisée des dossiers d'appels d'offres et suivi local.",
+  "author": "Alexis Tissier",
+  "main": "desktop/main.cjs",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "vite build",
+    "start": "node server.mjs",
+    "test": "node --test",
+    "check": "npm test && npm run build && node --check server.mjs && node --check desktop/main.cjs && node --check desktop/preload.cjs",
+    "prepare:icon": "node scripts/prepare-icon.mjs",
+    "desktop:dev": "node scripts/dev.mjs",
+    "dist:win": "npm run prepare:icon && npm run build && electron-builder --win nsis portable --x64",
+    "dist:win:dir": "npm run prepare:icon && npm run build && electron-builder --win --dir --x64"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.2.0",
+    "express": "^5.1.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "electron-builder": "26.15.3",
+    "vite": "8.1.5"
+  },
+  "build": {
+    "appId": "fr.alexis-tissier.createur-ao",
+    "productName": "Créateur d’AO",
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "desktop/**/*",
+      "lib/**/*",
+      "server.mjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "executableName": "Createur-AO",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "Createur-AO-portable.exe"
+    },
+    "nsis": {
+      "artifactName": "Createur-AO-Setup.exe",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Créateur d’AO",
+      "runAfterFinish": true
+    }
+  }
+}
