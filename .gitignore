@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# Données locales : ne jamais versionner les chemins réseau ni l'historique réel.
+data/*
+!data/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+
+release/
+
+data-test-first-run/
+
+# Icônes binaires générées depuis build/icon.ico.b64
+build/icon.ico
+build/icon.png
