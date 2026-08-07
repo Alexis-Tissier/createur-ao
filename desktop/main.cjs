@@ -80,10 +80,14 @@ async function startPackagedBackend() {
 
   const serverFile = path.join(app.getAppPath(), 'server.mjs');
   const dataDir = app.getPath('userData');
+  const runtimeDir = path.dirname(process.execPath);
   fs.mkdirSync(dataDir, { recursive: true });
 
   backendProcess = spawn(process.execPath, [serverFile], {
-    cwd: app.getAppPath(),
+    // app.getAppPath() pointe vers resources/app.asar en production. Un chemin ASAR
+    // n'est pas un vrai répertoire Windows et provoque spawn ENOENT s'il est utilisé
+    // comme cwd. On lance donc le runtime depuis le dossier réel de l'exécutable.
+    cwd: runtimeDir,
     windowsHide: true,
     stdio: 'ignore',
     env: {
@@ -92,6 +96,10 @@ async function startPackagedBackend() {
       AO_CREATOR_PORT: String(PROD_PORT),
       AO_CREATOR_DATA_DIR: dataDir
     }
+  });
+
+  backendProcess.once('error', (error) => {
+    console.error('Impossible de démarrer le service interne :', error);
   });
 
   await waitForBackend(`http://127.0.0.1:${PROD_PORT}/api/health`);
