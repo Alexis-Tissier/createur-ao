@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { buildFolderName, createFolderTree, sanitizeSegment } from '../lib/folders.mjs';
+import { buildFolderName, createFolderTree, sanitizeSegment, writeContactsFile } from '../lib/folders.mjs';
 
 test('construit le nom sans underscore devant l’année', () => {
   assert.equal(
@@ -55,6 +55,18 @@ test('crée toute l’arborescence', async () => {
     });
     const stat = await fs.stat(path.join(root, 'A', 'B'));
     assert.equal(stat.isDirectory(), true);
+  } finally {
+    await fs.rm(base, { recursive: true, force: true });
+  }
+});
+
+test('écrit CONTACTS.txt en UTF-8 sans modifier le texte saisi', async () => {
+  const base = await fs.mkdtemp(path.join(os.tmpdir(), 'createur-ao-contacts-'));
+  const contact = 'Mme Élise Martin\nelise.martin@example.fr\n01 23 45 67 89';
+  try {
+    await writeContactsFile({ fs, rootPath: base, contact });
+    const content = await fs.readFile(path.join(base, 'CONTACTS.txt'), 'utf8');
+    assert.equal(content, contact);
   } finally {
     await fs.rm(base, { recursive: true, force: true });
   }
