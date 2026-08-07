@@ -1,0 +1,62 @@
+name: Publish v0.3.2 release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release-v0.3.2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Validate
+        run: npm run check
+
+      - name: Build Windows setup
+        run: npm run prepare:icon && npm run build && npx electron-builder --win nsis --x64 --publish never
+
+      - name: Upload setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: Createur-AO-Setup-v0.3.2
+          path: release/Createur-AO-Setup.exe
+          if-no-files-found: error
+
+  publish-release:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download setup
+        uses: actions/download-artifact@v4
+        with:
+          name: Createur-AO-Setup-v0.3.2
+          path: release
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v0.3.2 \
+            "release/Createur-AO-Setup.exe" \
+            --repo "${{ github.repository }}" \
+            --target "${{ github.sha }}" \
+            --title "Créateur d'AO v0.3.2" \
+            --notes ""
