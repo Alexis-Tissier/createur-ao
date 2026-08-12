@@ -211,6 +211,49 @@ function publicSettings() {
     peerId: PEER_ID
   };
 }
+function sharedConfigSnapshot() {
+  return {
+    destinations: db.prepare('SELECT name, path FROM destinations ORDER BY name COLLATE NOCASE').all(),
+    tree: readTree(),
+    updatedAt: getSetting('shared_config_updated_at') || '',
+    actorPcId: getSetting('shared_config_actor') || ''
+  };
+}
+function configIsNewer(snapshot, actorPc='') {
+  const incomingAt=String(snapshot?.updatedAt||'');
+  const currentAt=getSetting('shared_config_updated_at');
+  if(incomingAt>currentAt)return true;
+  if(incomingAt<currentAt)return false;
+  return sanitizePeer(actorPc||snapshot?.actorPcId||'')>sanitizePeer(getSetting('shared_config_actor'));
+}
+function applySharedConfigSnapshot(snapshot, actorPc='') {
+  if(!snapshot||!Array.isArray(snapshot.destinations)||!Array.isArray(snapshot.tree))return false;
+  if(!configIsNewer(snapshot,actorPc))return false;
+  const normalized=snapshot.destinations.map(d=>({name:sanitizeSegment(d?.name),path:String(d?.path||'').trim()})).filter(d=>d.name&&d.path);
+  const tree=normalizeTree(snapshot.tree);
+  assertNoDuplicateSiblings(tree);
+  const tx=db.transaction(()=>{
+    const keep=new Set(normalized.map(d=>d.name.toLocaleLowerCase('fr')));
+    const existing=db.prepare('SELECT id,name FROM destinations').all();
+    const upsert=db.prepare(`INSERT INTO destinations (name,path) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET path=excluded.path`);
+    for(const d of normalized)upsert.run(d.name,d.path);
+    const remove=db.prepare('DELETE FROM destinations WHERE id=?');
+    for(const d of existing)if(!keep.has(d.name.toLocaleLowerCase('fr')))remove.run(d.id);
+    putSetting('folder_tree',JSON.stringify(tree));
+    putSetting('shared_config_updated_at',String(snapshot.updatedAt||nowIso()));
+    putSetting('shared_config_actor',sanitizePeer(actorPc||snapshot.actorPcId||''));
+  });
+  tx();
+  return true;
+}
+function queueSharedConfig(action='Configuration partagée modifiée') {
+  const at=nowIso();
+  putSetting('shared_config_updated_at',at);
+  putSetting('shared_config_actor',PEER_ID);
+  const config=sharedConfigSnapshot();
+  queueEvent({type:'config.snapshot',payload:{config},action,details:`${config.destinations.length} destination(s) · arborescence partagée`});
+}
+
 function actorName(pcId) {
   const row = db.prepare('SELECT display_name FROM actors WHERE pc_id = ?').get(pcId);
   return row?.display_name || pcId || '—';
@@ -333,6 +376,9 @@ function applyRemoteEvent(event) {
         db.prepare('UPDATE offers SET last_followup_at = ?, followup_count = followup_count + 1, last_actor_pc = ?, updated_at = ? WHERE uid = ?')
           .run(payload.date || '', event.peerId, event.createdAt, event.offerUid);
       }
+    }
+    if (event.type === 'config.snapshot') {
+      applySharedConfigSnapshot(payload.config, event.peerId);
     }
     if (event.type === 'actor.set') {
       db.prepare(`INSERT INTO actors (pc_id, display_name, updated_at) VALUES (?, ?, ?)
@@ -521,6 +567,10 @@ app.put('/api/settings/shared', async (req, res) => {
         status: offer.status
       });
     }
+    const configAt = nowIso();
+    putSetting('shared_config_updated_at', configAt);
+    putSetting('shared_config_actor', PEER_ID);
+    queueEvent({ type:'config.snapshot', payload:{config:sharedConfigSnapshot()}, action:'Configuration locale partagée', details:'Destinations et arborescence initiales' });
     const knownActors = db.prepare("SELECT pc_id, display_name FROM actors WHERE display_name <> ''").all();
     for (const actor of knownActors) {
       queueEvent({
@@ -699,17 +749,17 @@ app.post('/api/bootstrap/import', (req, res) => {
       const insert = db.prepare('INSERT INTO destinations (name,path) VALUES (?,?)');
       for (const d of destinations) insert.run(sanitizeSegment(d.name), cleanDestinationPath(d.path));
       putSetting('folder_tree', JSON.stringify(tree)); putSetting('bootstrap_complete','1');
-    }); tx(); res.json(publicSettings());
+    }); tx(); queueSharedConfig('Modèle de démarrage importé'); void syncMaster(); res.json(publicSettings());
   } catch (error) { res.status(400).json({error:String(error?.message || error)}); }
 });
 app.post('/api/bootstrap/skip', (_req,res) => { putSetting('bootstrap_complete','1'); res.json(publicSettings()); });
 app.post('/api/destinations', (req,res) => {
-  try { const name=sanitizeSegment(req.body?.name), p=cleanDestinationPath(req.body?.path); if(!name) throw new Error('Nom obligatoire.'); const info=db.prepare('INSERT INTO destinations (name,path) VALUES (?,?)').run(name,p); res.status(201).json(db.prepare('SELECT id,name,path FROM destinations WHERE id=?').get(info.lastInsertRowid)); }
+  try { const name=sanitizeSegment(req.body?.name), p=cleanDestinationPath(req.body?.path); if(!name) throw new Error('Nom obligatoire.'); const info=db.prepare('INSERT INTO destinations (name,path) VALUES (?,?)').run(name,p); queueSharedConfig('Destination ajoutée'); void syncMaster(); res.status(201).json(db.prepare('SELECT id,name,path FROM destinations WHERE id=?').get(info.lastInsertRowid)); }
   catch(error){res.status(String(error.message).includes('UNIQUE')?409:400).json({error:String(error.message).includes('UNIQUE')?'Ce nom de destination existe déjà.':String(error.message||error)});}
 });
-app.put('/api/destinations/:id',(req,res)=>{try{const id=Number(req.params.id),name=sanitizeSegment(req.body?.name),p=cleanDestinationPath(req.body?.path);const info=db.prepare('UPDATE destinations SET name=?,path=? WHERE id=?').run(name,p,id);if(!info.changes)return res.status(404).json({error:'Destination introuvable.'});res.json(db.prepare('SELECT id,name,path FROM destinations WHERE id=?').get(id));}catch(error){res.status(400).json({error:String(error.message||error)});}});
-app.delete('/api/destinations/:id',(req,res)=>{const info=db.prepare('DELETE FROM destinations WHERE id=?').run(Number(req.params.id));if(!info.changes)return res.status(404).json({error:'Destination introuvable.'});res.status(204).end();});
-app.put('/api/tree',(req,res)=>{try{const tree=normalizeTree(req.body?.tree);assertNoDuplicateSiblings(tree);putSetting('folder_tree',JSON.stringify(tree));res.json({tree});}catch(error){res.status(400).json({error:String(error.message||error)});}});
+app.put('/api/destinations/:id',(req,res)=>{try{const id=Number(req.params.id),name=sanitizeSegment(req.body?.name),p=cleanDestinationPath(req.body?.path);const info=db.prepare('UPDATE destinations SET name=?,path=? WHERE id=?').run(name,p,id);if(!info.changes)return res.status(404).json({error:'Destination introuvable.'});queueSharedConfig('Destination modifiée');void syncMaster();res.json(db.prepare('SELECT id,name,path FROM destinations WHERE id=?').get(id));}catch(error){res.status(400).json({error:String(error.message||error)});}});
+app.delete('/api/destinations/:id',(req,res)=>{const info=db.prepare('DELETE FROM destinations WHERE id=?').run(Number(req.params.id));if(!info.changes)return res.status(404).json({error:'Destination introuvable.'});queueSharedConfig('Destination supprimée');void syncMaster();res.status(204).end();});
+app.put('/api/tree',(req,res)=>{try{const tree=normalizeTree(req.body?.tree);assertNoDuplicateSiblings(tree);putSetting('folder_tree',JSON.stringify(tree));queueSharedConfig('Arborescence modifiée');void syncMaster();res.json({tree});}catch(error){res.status(400).json({error:String(error.message||error)});}});
 
 if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR));
