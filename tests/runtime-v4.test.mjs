@@ -75,6 +75,14 @@ test('v0.4 démarre et migre une base v0.3', { timeout: 20000 }, async () => {
     const health = await waitFor(`http://127.0.0.1:${port}/api/health`, child);
     assert.equal(health.ok, true);
     assert.equal(health.peerId, 'ATISSIER-TEST');
+    const offers = await fetch(`http://127.0.0.1:${port}/api/offers`).then((r) => r.json());
+    assert.equal(offers.length, 1);
+    const followupResponse = await fetch(`http://127.0.0.1:${port}/api/offers/${offers[0].uid}/followups`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: '2026-08-12', note: 'Migration OK' })
+    });
+    assert.equal(followupResponse.status, 201);
   } catch (error) {
     throw new Error(`${error.message}\n${stderr}`);
   } finally {

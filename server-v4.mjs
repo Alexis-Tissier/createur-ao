@@ -129,11 +129,20 @@ for (const [column, sql] of [
   ['updated_at', "ALTER TABLE offers ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"]
 ]) ensureColumn('offers', column, sql);
 
+for (const [column, sql] of [
+  ['event_id', "ALTER TABLE followups ADD COLUMN event_id TEXT"],
+  ['offer_uid', "ALTER TABLE followups ADD COLUMN offer_uid TEXT NOT NULL DEFAULT ''"],
+  ['actor_pc_id', "ALTER TABLE followups ADD COLUMN actor_pc_id TEXT NOT NULL DEFAULT ''"]
+]) ensureColumn('followups', column, sql);
+
 const legacyRows = db.prepare("SELECT id FROM offers WHERE uid IS NULL OR uid = ''").all();
 const setLegacyUid = db.prepare('UPDATE offers SET uid = ? WHERE id = ?');
 for (const row of legacyRows) setLegacyUid.run(crypto.randomUUID(), row.id);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_uid ON offers(uid)');
 db.prepare("UPDATE offers SET updated_at = COALESCE(NULLIF(updated_at, ''), created_at, CURRENT_TIMESTAMP) WHERE updated_at = '' OR updated_at IS NULL").run();
+db.prepare("UPDATE followups SET offer_uid = COALESCE((SELECT uid FROM offers WHERE offers.id = followups.offer_id), offer_uid) WHERE offer_uid = '' AND EXISTS (SELECT 1 FROM pragma_table_info('followups') WHERE name='offer_id')").run();
+db.prepare("UPDATE followups SET event_id = 'legacy-followup-' || id WHERE event_id IS NULL OR event_id = ''").run();
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_followups_event_id ON followups(event_id)');
 
 db.prepare(`
   INSERT INTO actors (pc_id, display_name, updated_at) VALUES (?, '', ?)
