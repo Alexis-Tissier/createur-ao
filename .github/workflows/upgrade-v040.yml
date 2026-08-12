@@ -1,0 +1,35 @@
+name: Upgrade v0.4.0 shared tracking
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/upgrade-v040.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Apply v0.4.0 sources
+        run: node scripts/apply-v040.mjs
+      - name: Install dependencies
+        run: npm install
+      - name: Validate
+        run: npm run check
+      - name: Commit upgrade
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/upgrade-v040.yml
+          git add -A
+          git commit -m "feat: shared AO tracking and transfer workflow"
+          git push
