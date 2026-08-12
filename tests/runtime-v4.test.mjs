@@ -97,6 +97,7 @@ test('v0.4 démarre et migre une base v0.3', { timeout: 20000 }, async () => {
   assert.ok(columns.includes('updated_at'));
   const row = migrated.prepare('SELECT uid, client, status, updated_at FROM offers LIMIT 1').get();
   assert.ok(row.uid);
+  assert.equal(row.uid.startsWith('legacy-'), true);
   assert.equal(row.client, '');
   assert.equal(row.status, 'a_attribuer');
   assert.ok(row.updated_at);

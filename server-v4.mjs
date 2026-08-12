@@ -135,9 +135,13 @@ for (const [column, sql] of [
   ['actor_pc_id', "ALTER TABLE followups ADD COLUMN actor_pc_id TEXT NOT NULL DEFAULT ''"]
 ]) ensureColumn('followups', column, sql);
 
-const legacyRows = db.prepare("SELECT id FROM offers WHERE uid IS NULL OR uid = ''").all();
+function legacyOfferUid(folderName) {
+  const digest = crypto.createHash('sha256').update(String(folderName || '').toLocaleLowerCase('fr')).digest('hex').slice(0, 32);
+  return `legacy-${digest}`;
+}
+const legacyRows = db.prepare("SELECT id, folder_name FROM offers WHERE uid IS NULL OR uid = ''").all();
 const setLegacyUid = db.prepare('UPDATE offers SET uid = ? WHERE id = ?');
-for (const row of legacyRows) setLegacyUid.run(crypto.randomUUID(), row.id);
+for (const row of legacyRows) setLegacyUid.run(legacyOfferUid(row.folder_name), row.id);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_uid ON offers(uid)');
 db.prepare("UPDATE offers SET updated_at = COALESCE(NULLIF(updated_at, ''), created_at, CURRENT_TIMESTAMP) WHERE updated_at = '' OR updated_at IS NULL").run();
 db.prepare("UPDATE followups SET offer_uid = COALESCE((SELECT uid FROM offers WHERE offers.id = followups.offer_id), offer_uid) WHERE offer_uid = '' AND EXISTS (SELECT 1 FROM pragma_table_info('followups') WHERE name='offer_id')").run();
@@ -479,9 +483,44 @@ app.use(express.json({ limit: '2mb' }));
 app.get('/api/health', (_req, res) => res.json({ ok: true, database: DB_FILE, peerId: PEER_ID }));
 app.get('/api/settings', (_req, res) => res.json(publicSettings()));
 app.put('/api/settings/shared', async (req, res) => {
-  putSetting('master_root', String(req.body?.masterRoot || '').trim());
+  const masterRoot = String(req.body?.masterRoot || '').trim();
+  const previousRoot = getSetting('master_root');
+  putSetting('master_root', masterRoot);
   putSetting('won_path', String(req.body?.wonPath || '').trim());
   putSetting('lost_path', String(req.body?.lostPath || '').trim());
+
+  // Lors de la première association à une base maître, publier aussi l'historique
+  // déjà présent sur ce poste. Les anciens AO utilisent un UID déterministe dérivé
+  // du nom du dossier, afin que deux postes possédant le même historique ne créent
+  // pas deux lignes différentes dans la base commune.
+  const seededRoot = getSetting('master_seeded_root');
+  if (masterRoot && seededRoot !== masterRoot) {
+    const existingOffers = db.prepare('SELECT * FROM offers ORDER BY created_at, id').all();
+    for (const offer of existingOffers) {
+      queueEvent({
+        type: 'offer.snapshot',
+        offerUid: offer.uid,
+        payload: { offer: serializeOffer(offer) },
+        action: 'AO existant partagé',
+        details: offer.folder_name,
+        department: offer.department,
+        status: offer.status
+      });
+    }
+    const knownActors = db.prepare("SELECT pc_id, display_name FROM actors WHERE display_name <> ''").all();
+    for (const actor of knownActors) {
+      queueEvent({
+        type: 'actor.set',
+        payload: { pcId: actor.pc_id, displayName: actor.display_name },
+        action: 'Nom utilisateur partagé',
+        details: `${actor.pc_id} → ${actor.display_name}`
+      });
+    }
+    putSetting('master_seeded_root', masterRoot);
+  } else if (!masterRoot && previousRoot) {
+    putSetting('master_seeded_root', '');
+  }
+
   await syncMaster();
   res.json(publicSettings());
 });
