@@ -1,0 +1,31 @@
+name: Hotfix v0.4 master join
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/hotfix-v040-master-join.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/hotfix-v040-master-join.mjs
+      - run: npm install
+      - run: npm run check
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/hotfix-v040-master-join.yml scripts/hotfix-v040-master-join.mjs
+          git add server-v4.mjs
+          git commit -m "fix: preserve shared config when a new PC joins"
+          git push
