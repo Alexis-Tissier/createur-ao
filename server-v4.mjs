@@ -126,12 +126,14 @@ for (const [column, sql] of [
   ['due_date', "ALTER TABLE offers ADD COLUMN due_date TEXT NOT NULL DEFAULT ''"],
   ['created_by_pc', "ALTER TABLE offers ADD COLUMN created_by_pc TEXT NOT NULL DEFAULT ''"],
   ['last_actor_pc', "ALTER TABLE offers ADD COLUMN last_actor_pc TEXT NOT NULL DEFAULT ''"],
-  ['updated_at', "ALTER TABLE offers ADD COLUMN updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"]
+  ['updated_at', "ALTER TABLE offers ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''"]
 ]) ensureColumn('offers', column, sql);
 
 const legacyRows = db.prepare("SELECT id FROM offers WHERE uid IS NULL OR uid = ''").all();
 const setLegacyUid = db.prepare('UPDATE offers SET uid = ? WHERE id = ?');
 for (const row of legacyRows) setLegacyUid.run(crypto.randomUUID(), row.id);
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_uid ON offers(uid)');
+db.prepare("UPDATE offers SET updated_at = COALESCE(NULLIF(updated_at, ''), created_at, CURRENT_TIMESTAMP) WHERE updated_at = '' OR updated_at IS NULL").run();
 
 db.prepare(`
   INSERT INTO actors (pc_id, display_name, updated_at) VALUES (?, '', ?)
@@ -400,8 +402,14 @@ async function acquireOfferLock(offerUid) {
     await fsp.writeFile(path.join(lockDir, 'owner.json'), JSON.stringify({ peerId: PEER_ID, at: nowIso() }), 'utf8');
   } catch (error) {
     if (error?.code !== 'EEXIST') throw error;
-    let owner = 'un autre poste';
-    try { owner = JSON.parse(await fsp.readFile(path.join(lockDir, 'owner.json'), 'utf8'))?.peerId || owner; } catch {}
+    let meta = null;
+    try { meta = JSON.parse(await fsp.readFile(path.join(lockDir, 'owner.json'), 'utf8')); } catch {}
+    const age = meta?.at ? Date.now() - new Date(meta.at).getTime() : Number.POSITIVE_INFINITY;
+    if (!Number.isFinite(age) || age > 120000) {
+      await fsp.rm(lockDir, { recursive: true, force: true }).catch(() => {});
+      return acquireOfferLock(offerUid);
+    }
+    const owner = meta?.peerId || 'un autre poste';
     throw new Error(`Cet AO est déjà en cours de modification par ${owner}.`);
   }
   return async () => { await fsp.rm(lockDir, { recursive: true, force: true }).catch(() => {}); };
