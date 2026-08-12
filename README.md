@@ -1,5 +1,23 @@
 # Créateur d’AO
 
+Application Windows React/Electron de création, transfert et suivi partagé des appels d'offres.
+
+## v0.4
+
+- ajout du Client après le BE dans le nom ;
+- BE ou Client obligatoire, les deux possibles ;
+- onglet Transférer avec sélecteur natif Windows, renommage et déplacement ;
+- suivi À attribuer / En cours / Envoyé / Gagné / Perdu ;
+- échéances de remise ;
+- historique partagé et filtres par personne, département et statut ;
+- identification par nom du PC et mapping PC → personne ;
+- base maître sans service : journaux d'événements sur un partage réseau, SQLite local sur chaque poste, synchronisation toutes les 5 secondes ;
+- scan configurable des dossiers Gagnés et Perdus.
+
+Le chemin réel du partage d'entreprise n'est jamais versionné : il est sélectionné dans Réglages sur chaque poste.
+
+## Historique du projet
+
 Application locale React + Node/Electron destinée à créer des dossiers d'appels d'offres selon une convention de nommage fixe, générer leur arborescence et conserver un historique de suivi.
 
 ## Fonctions
