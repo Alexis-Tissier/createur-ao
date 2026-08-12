@@ -1,0 +1,31 @@
+name: Hotfix v0.4 settings UI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/hotfix-v040-settings-ui.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/hotfix-v040-settings-ui.mjs
+      - run: npm install
+      - run: npm run check
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/hotfix-v040-settings-ui.yml scripts/hotfix-v040-settings-ui.mjs
+          git add src/AppV4.jsx src/styles-v4.css
+          git commit -m "fix: keep destination tree and bootstrap settings in v0.4"
+          git push
