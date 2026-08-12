@@ -1,0 +1,51 @@
+name: Release v0.4.0-beta.1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/release-v0.4.0-beta.1.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install
+      - name: Validate including two-PC sync test
+        run: npm run check
+      - name: Build NSIS setup
+        run: npm run prepare:icon && npm run build && npx electron-builder --win nsis --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: createur-ao-v040-beta-setup
+          path: release/Createur-AO-Setup.exe
+          if-no-files-found: error
+
+  publish:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: createur-ao-v040-beta-setup
+          path: release
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create v0.4.0-beta.1
+          release/Createur-AO-Setup.exe
+          --repo "${{ github.repository }}"
+          --target "${{ github.sha }}"
+          --title "Créateur d'AO v0.4.0 beta 1"
+          --notes "Version de test de la nouvelle base maître multi-postes, du transfert et du suivi partagé des AO."
+          --prerelease
