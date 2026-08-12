@@ -163,36 +163,32 @@ function TransferPage({ settings, reload, toast }) {
   </main>;
 }
 
+function FollowupModalV4({row,close,reload,toast}){
+  const [date,setDate]=useState(today());const [note,setNote]=useState('');const [busy,setBusy]=useState(false);
+  async function submit(e){e.preventDefault();try{setBusy(true);await api(`/api/offers/${row.uid}/followups`,{method:'POST',body:JSON.stringify({date,note})});await reload();toast({message:'Relance enregistrée.'});close();}catch(error){toast({type:'error',message:error.message});}finally{setBusy(false);}}
+  return <div className="overlay" onMouseDown={e=>e.target===e.currentTarget&&close()}><form className="modal" onSubmit={submit}><header><div><span className="eyebrow">Relance</span><h2>{row.title}</h2></div><button type="button" className="icon-button" onClick={close}>×</button></header><Field label="Date"><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></Field><Field label="Compte rendu"><textarea rows="4" value={note} onChange={e=>setNote(e.target.value)} placeholder="Appel, mail, retour client…"/></Field><footer><button type="button" className="secondary-button" onClick={close}>Annuler</button><button className="primary-button" disabled={busy}>{busy?'Enregistrement…':'Enregistrer'}</button></footer></form></div>;
+}
+
+function TrackingRowV4({row,patch,followup}){
+  const [department,setDepartment]=useState(row.department||'');
+  useEffect(()=>setDepartment(row.department||''),[row.department]);
+  return <div className="v4-track-row">
+    <div className="offer-cell"><strong>{row.title}</strong><code>{row.folderName}</code></div>
+    <div className="muted-cell">{row.client||row.be||'—'}<small>{row.client&&row.be?`BE : ${row.be}`:''}</small></div>
+    <input value={department} onChange={e=>setDepartment(e.target.value)} onBlur={()=>department.trim()!==String(row.department||'').trim()&&patch(row,{department:department.trim()})} placeholder="Département"/>
+    <select className={`status-select ${row.status}`} value={row.status} onChange={e=>patch(row,{status:e.target.value})}>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select>
+    <input type="date" value={row.dueDate||''} onChange={e=>patch(row,{dueDate:e.target.value})}/>
+    <div className="v4-track-actions"><div className="muted-cell"><strong>{row.lastActorName||row.lastActorPc||'—'}</strong><small>{row.updatedAt?new Date(row.updatedAt).toLocaleString('fr-FR'):''}</small></div><button className="small-action" onClick={followup}>Relance</button><small>{row.lastFollowupAt?`${row.lastFollowupAt} · ${row.followupCount}`:'Aucune relance'}</small></div>
+  </div>;
+}
+
 function TrackingPage({ offers, settings, reload, toast }) {
-  const [query,setQuery] = useState('');
-  const [status,setStatus] = useState('');
-  const [department,setDepartment] = useState('');
-  const rows = useMemo(() => offers.filter(r => {
-    const q=query.trim().toLocaleLowerCase('fr');
-    const okQ=!q || [r.folderName,r.title,r.client,r.be,r.ca,r.department,r.createdByName,r.lastActorName].some(v=>String(v||'').toLocaleLowerCase('fr').includes(q));
-    return okQ && (!status || r.status===status) && (!department || r.department===department);
-  }),[offers,query,status,department]);
+  const [query,setQuery]=useState('');const [status,setStatus]=useState('');const [department,setDepartment]=useState('');const [followup,setFollowup]=useState(null);
+  const rows=useMemo(()=>offers.filter(r=>{const q=query.trim().toLocaleLowerCase('fr');const okQ=!q||[r.folderName,r.title,r.client,r.be,r.ca,r.department,r.createdByName,r.lastActorName].some(v=>String(v||'').toLocaleLowerCase('fr').includes(q));return okQ&&(!status||r.status===status)&&(!department||r.department===department);}),[offers,query,status,department]);
   const departments=[...new Set(offers.map(x=>x.department).filter(Boolean))].sort();
-  async function patch(row, fields) {
-    try { await api(`/api/offers/${row.uid}`,{method:'PATCH',body:JSON.stringify(fields)}); await reload(); }
-    catch(error){toast({type:'error',message:error.message});}
-  }
+  async function patch(row,fields){try{await api(`/api/offers/${row.uid}`,{method:'PATCH',body:JSON.stringify(fields)});await reload();}catch(error){toast({type:'error',message:error.message});}}
   async function scan(){try{const r=await api('/api/scan-status',{method:'POST'});await reload();toast({message:r.changed?`${r.changed} statut(s) détecté(s).`:'Aucun changement détecté.'});}catch(error){toast({type:'error',message:error.message});}}
-  return <main className="content history-page">
-    <header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button className="secondary-button" onClick={scan}><Icon name="refresh" size={15}/>Scanner Gagnés / Perdus</button></header>
-    <div className="v4-filters"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={department} onChange={e=>setDepartment(e.target.value)}><option value="">Tous les départements</option>{departments.map(d=><option key={d}>{d}</option>)}</select></div>
-    <section className="v4-table-card">
-      <div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Département</span><span>Statut</span><span>Échéance</span><span>Dernière action</span></div>
-      {!rows.length ? <div className="empty-state"><strong>Aucun AO</strong></div> : rows.map(row=><div className="v4-track-row" key={row.uid}>
-        <div className="offer-cell"><strong>{row.title}</strong><code>{row.folderName}</code></div>
-        <div className="muted-cell">{row.client || row.be || '—'}</div>
-        <input value={row.department || ''} onChange={e=>{row.department=e.target.value;reload&&void 0;}} onBlur={e=>patch(row,{department:e.target.value.trim()})} placeholder="Département"/>
-        <select className={`status-select ${row.status}`} value={row.status} onChange={e=>patch(row,{status:e.target.value})}>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select>
-        <input type="date" value={row.dueDate || ''} onChange={e=>patch(row,{dueDate:e.target.value})}/>
-        <div className="muted-cell"><strong>{row.lastActorName || row.lastActorPc || '—'}</strong><small>{row.updatedAt ? new Date(row.updatedAt).toLocaleString('fr-FR') : ''}</small></div>
-      </div>)}
-    </section>
-  </main>;
+  return <main className="content history-page"><header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button className="secondary-button" onClick={scan}><Icon name="refresh" size={15}/>Scanner Gagnés / Perdus</button></header><div className="v4-filters"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={department} onChange={e=>setDepartment(e.target.value)}><option value="">Tous les départements</option>{departments.map(d=><option key={d}>{d}</option>)}</select></div><section className="v4-table-card"><div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Département</span><span>Statut</span><span>Échéance</span><span>Suivi</span></div>{!rows.length?<div className="empty-state"><strong>Aucun AO</strong></div>:rows.map(row=><TrackingRowV4 key={row.uid} row={row} patch={patch} followup={()=>setFollowup(row)}/>)}</section>{followup&&<FollowupModalV4 row={followup} close={()=>setFollowup(null)} reload={reload} toast={toast}/>}</main>;
 }
 
 function LogsPage({ toast }) {
