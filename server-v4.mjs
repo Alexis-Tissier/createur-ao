@@ -283,9 +283,20 @@ function queueEvent({ type, offerUid = null, payload = {}, action, details = '',
 function serializeOffer(row) {
   return offerPublic(row);
 }
+function shouldApplyOfferSnapshot(existing, snapshot, actorPc = '') {
+  if (!existing) return true;
+  const incomingAt = String(snapshot?.updatedAt || snapshot?.createdAt || '');
+  const currentAt = String(existing.updated_at || existing.created_at || '');
+  if (incomingAt > currentAt) return true;
+  if (incomingAt < currentAt) return false;
+  const incomingActor = sanitizePeer(actorPc || snapshot?.lastActorPc || snapshot?.createdByPc || '');
+  const currentActor = sanitizePeer(existing.last_actor_pc || existing.created_by_pc || '');
+  return incomingActor > currentActor;
+}
 function upsertOfferSnapshot(snapshot, actorPc = '') {
-  if (!snapshot?.uid) return;
+  if (!snapshot?.uid) return false;
   const existing = offerByUid(snapshot.uid);
+  if (!shouldApplyOfferSnapshot(existing, snapshot, actorPc)) return false;
   const params = {
     uid: snapshot.uid,
     folderName: snapshot.folderName || '', date: snapshot.date || '', ca: snapshot.ca || 'XX', be: snapshot.be || '', client: snapshot.client || '',
@@ -307,6 +318,7 @@ function upsertOfferSnapshot(snapshot, actorPc = '') {
       VALUES (@uid,@folderName,@date,@ca,@be,@client,@title,@commercial,@quoteNumber,@contact,@destinationId,@destinationName,@basePath,@finalPath,
       @department,@status,@dueDate,@remark,@createdByPc,@lastActorPc,@lastFollowupAt,@followupCount,@createdAt,@updatedAt)`).run(params);
   }
+  return true;
 }
 function applyRemoteEvent(event) {
   if (!event?.eventId || db.prepare('SELECT 1 FROM sync_events WHERE event_id = ?').get(event.eventId)) return false;
@@ -324,7 +336,9 @@ function applyRemoteEvent(event) {
     }
     if (event.type === 'actor.set') {
       db.prepare(`INSERT INTO actors (pc_id, display_name, updated_at) VALUES (?, ?, ?)
-        ON CONFLICT(pc_id) DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at`)
+        ON CONFLICT(pc_id) DO UPDATE SET display_name=excluded.display_name, updated_at=excluded.updated_at
+        WHERE excluded.updated_at > actors.updated_at
+           OR (excluded.updated_at = actors.updated_at AND excluded.display_name > actors.display_name)`)
         .run(payload.pcId, payload.displayName || '', event.createdAt);
     }
     db.prepare(`INSERT INTO sync_events (event_id,peer_id,seq,type,offer_uid,payload_json,action,details,department,status,created_at,exported)
