@@ -1,0 +1,39 @@
+name: Hotfix v0.4 compact workflow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/hotfix_v040_ux.py'
+      - '.github/workflows/hotfix-v040-ux-model.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply corrections
+        run: python3 scripts/hotfix_v040_ux.py
+      - name: Install dependencies
+        run: npm install
+      - name: Validate
+        run: npm run check
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/folders-v4.mjs server-v4.mjs src/AppV4.jsx src/styles-v4.css tests/folders-v4.test.mjs tests/workflow-v4.test.mjs
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "fix: compact workflow and destination-based tracking"
+            git push
+          fi
