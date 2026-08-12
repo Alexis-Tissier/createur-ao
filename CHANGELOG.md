@@ -14,7 +14,8 @@
 - aucune restriction de département liée à une personne ;
 - base maître sans service applicatif : journal partagé sur un dossier réseau et SQLite local par poste, synchronisés toutes les 5 secondes ;
 - scan configurable des dossiers Gagnés et Perdus ;
-- verrou temporaire lors du transfert d’un même AO depuis plusieurs postes.
+- verrou temporaire lors du transfert d’un même AO depuis plusieurs postes, avec récupération automatique d’un verrou abandonné ;
+- migration des bases v0.3 durcie afin de conserver les données locales existantes lors du passage à la v0.4.
 
 ## v0.3.0
 
@@ -30,6 +31,6 @@
 
 ## v0.2.3
 
-- modèle de démarrage exportable/importable pour préremplir destinations et arborescence au premier lancement ;
+- modèle de démarrage exportable/importable pour préremir destinations et arborescence au premier lancement ;
 - destination volontairement vide au démarrage et après création ;
 - suppression d’une ligne de l’historique sans suppression du dossier physique.
