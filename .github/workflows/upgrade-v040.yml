@@ -18,7 +18,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - name: Apply v0.4.0 sources
         run: node scripts/apply-v040.mjs
       - name: Install dependencies
@@ -33,5 +32,3 @@ jobs:
           git add -A
           git commit -m "feat: shared AO tracking and transfer workflow"
           git push
-
-# retrigger after v0.4 sources were added
