@@ -144,7 +144,10 @@ const setLegacyUid = db.prepare('UPDATE offers SET uid = ? WHERE id = ?');
 for (const row of legacyRows) setLegacyUid.run(legacyOfferUid(row.folder_name), row.id);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_uid ON offers(uid)');
 db.prepare("UPDATE offers SET updated_at = COALESCE(NULLIF(updated_at, ''), created_at, CURRENT_TIMESTAMP) WHERE updated_at = '' OR updated_at IS NULL").run();
-db.prepare("UPDATE followups SET offer_uid = COALESCE((SELECT uid FROM offers WHERE offers.id = followups.offer_id), offer_uid) WHERE offer_uid = '' AND EXISTS (SELECT 1 FROM pragma_table_info('followups') WHERE name='offer_id')").run();
+const followupColumns = new Set(db.prepare('PRAGMA table_info(followups)').all().map((row) => row.name));
+if (followupColumns.has('offer_id')) {
+  db.prepare("UPDATE followups SET offer_uid = COALESCE((SELECT uid FROM offers WHERE offers.id = followups.offer_id), offer_uid) WHERE offer_uid = ''").run();
+}
 db.prepare("UPDATE followups SET event_id = 'legacy-followup-' || id WHERE event_id IS NULL OR event_id = ''").run();
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_followups_event_id ON followups(event_id)');
 
