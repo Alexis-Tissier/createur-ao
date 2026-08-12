@@ -11,13 +11,13 @@ test('client vient après le BE dans le nom', () => {
 test('BE seul est accepté et client devient XX', () => {
   assert.equal(buildFolderName({
     date: '2026-08-12', ca: 'XX', be: 'BET', client: '', title: 'Travaux', commercial: '', quoteNumber: ''
-  }), '2026_08_12_XX_BET_XX_Travaux_XX_XX');
+  }), '2026_08_12_XX_BET_XX_Travaux__');
 });
 
 test('client seul est accepté et BE devient XX', () => {
   assert.equal(buildFolderName({
     date: '2026-08-12', ca: 'XX', be: '', client: 'VILLE', title: 'Travaux', commercial: '', quoteNumber: ''
-  }), '2026_08_12_XX_XX_VILLE_Travaux_XX_XX');
+  }), '2026_08_12_XX_XX_VILLE_Travaux__');
 });
 
 test('BE ou client est obligatoire', () => {

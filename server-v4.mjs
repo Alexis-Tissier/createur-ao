@@ -41,6 +41,12 @@ db.exec(`
     path TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS transfer_destinations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    path TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -144,6 +150,7 @@ const setLegacyUid = db.prepare('UPDATE offers SET uid = ? WHERE id = ?');
 for (const row of legacyRows) setLegacyUid.run(legacyOfferUid(row.folder_name), row.id);
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_uid ON offers(uid)');
 db.prepare("UPDATE offers SET updated_at = COALESCE(NULLIF(updated_at, ''), created_at, CURRENT_TIMESTAMP) WHERE updated_at = '' OR updated_at IS NULL").run();
+db.prepare("UPDATE offers SET due_date = date_ao WHERE COALESCE(due_date, '') <> COALESCE(date_ao, '')").run();
 const followupColumns = new Set(db.prepare('PRAGMA table_info(followups)').all().map((row) => row.name));
 if (followupColumns.has('offer_id')) {
   db.prepare("UPDATE followups SET offer_uid = COALESCE((SELECT uid FROM offers WHERE offers.id = followups.offer_id), offer_uid) WHERE offer_uid = ''").run();
@@ -206,17 +213,17 @@ function normalizeStatus(value) {
 function publicSettings() {
   return {
     destinations: db.prepare('SELECT id, name, path FROM destinations ORDER BY name COLLATE NOCASE').all(),
+    transferDestinations: db.prepare('SELECT id, name, path FROM transfer_destinations ORDER BY name COLLATE NOCASE').all(),
     tree: readTree(),
     onboardingComplete: getSetting('bootstrap_complete') === '1',
     masterRoot: getSetting('master_root'),
-    wonPath: getSetting('won_path'),
-    lostPath: getSetting('lost_path'),
     peerId: PEER_ID
   };
 }
 function sharedConfigSnapshot() {
   return {
     destinations: db.prepare('SELECT name, path FROM destinations ORDER BY name COLLATE NOCASE').all(),
+    transferDestinations: db.prepare('SELECT name, path FROM transfer_destinations ORDER BY name COLLATE NOCASE').all(),
     tree: readTree(),
     updatedAt: getSetting('shared_config_updated_at') || '',
     actorPcId: getSetting('shared_config_actor') || ''
@@ -232,16 +239,22 @@ function configIsNewer(snapshot, actorPc='') {
 function applySharedConfigSnapshot(snapshot, actorPc='') {
   if(!snapshot||!Array.isArray(snapshot.destinations)||!Array.isArray(snapshot.tree))return false;
   if(!configIsNewer(snapshot,actorPc))return false;
-  const normalized=snapshot.destinations.map(d=>({name:sanitizeSegment(d?.name),path:String(d?.path||'').trim()})).filter(d=>d.name&&d.path);
+  const normalizeDestinations=(items)=>items.map(d=>({name:sanitizeSegment(d?.name),path:String(d?.path||'').trim()})).filter(d=>d.name&&d.path);
+  const creation=normalizeDestinations(snapshot.destinations);
+  const transfer=normalizeDestinations(Array.isArray(snapshot.transferDestinations)?snapshot.transferDestinations:[]);
   const tree=normalizeTree(snapshot.tree);
   assertNoDuplicateSiblings(tree);
-  const tx=db.transaction(()=>{
-    const keep=new Set(normalized.map(d=>d.name.toLocaleLowerCase('fr')));
-    const existing=db.prepare('SELECT id,name FROM destinations').all();
-    const upsert=db.prepare(`INSERT INTO destinations (name,path) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET path=excluded.path`);
-    for(const d of normalized)upsert.run(d.name,d.path);
-    const remove=db.prepare('DELETE FROM destinations WHERE id=?');
+  const syncTable=(table,rows)=>{
+    const keep=new Set(rows.map(d=>d.name.toLocaleLowerCase('fr')));
+    const existing=db.prepare(`SELECT id,name FROM ${table}`).all();
+    const upsert=db.prepare(`INSERT INTO ${table} (name,path) VALUES (?,?) ON CONFLICT(name) DO UPDATE SET path=excluded.path`);
+    for(const d of rows)upsert.run(d.name,d.path);
+    const remove=db.prepare(`DELETE FROM ${table} WHERE id=?`);
     for(const d of existing)if(!keep.has(d.name.toLocaleLowerCase('fr')))remove.run(d.id);
+  };
+  const tx=db.transaction(()=>{
+    syncTable('destinations',creation);
+    syncTable('transfer_destinations',transfer);
     putSetting('folder_tree',JSON.stringify(tree));
     putSetting('shared_config_updated_at',String(snapshot.updatedAt||nowIso()));
     putSetting('shared_config_actor',sanitizePeer(actorPc||snapshot.actorPcId||''));
@@ -254,7 +267,7 @@ function queueSharedConfig(action='Configuration partagée modifiée') {
   putSetting('shared_config_updated_at',at);
   putSetting('shared_config_actor',PEER_ID);
   const config=sharedConfigSnapshot();
-  queueEvent({type:'config.snapshot',payload:{config},action,details:`${config.destinations.length} destination(s) · arborescence partagée`});
+  queueEvent({type:'config.snapshot',payload:{config},action,details:`${config.destinations.length} création · ${config.transferDestinations.length} transfert · arborescence partagée`});
 }
 
 function actorName(pcId) {
@@ -348,7 +361,7 @@ function upsertOfferSnapshot(snapshot, actorPc = '') {
     folderName: snapshot.folderName || '', date: snapshot.date || '', ca: snapshot.ca || 'XX', be: snapshot.be || '', client: snapshot.client || '',
     title: snapshot.title || '', commercial: snapshot.commercial || '', quoteNumber: snapshot.quoteNumber || '', contact: snapshot.contact || '',
     destinationId: snapshot.destinationId || null, destinationName: snapshot.destinationName || '', basePath: snapshot.basePath || '', finalPath: snapshot.finalPath || '',
-    department: snapshot.department || '', status: normalizeStatus(snapshot.status), dueDate: snapshot.dueDate || '', remark: snapshot.remark || '',
+    department: '', status: normalizeStatus(snapshot.status), dueDate: snapshot.date || snapshot.dueDate || '', remark: snapshot.remark || '',
     createdByPc: snapshot.createdByPc || actorPc || '', lastActorPc: actorPc || snapshot.lastActorPc || '',
     lastFollowupAt: snapshot.lastFollowupAt || null, followupCount: Number(snapshot.followupCount || 0),
     createdAt: snapshot.createdAt || nowIso(), updatedAt: snapshot.updatedAt || nowIso()
@@ -510,13 +523,19 @@ async function moveDirectory(source, target) {
     await fsp.rm(source, { recursive: true, force: true });
   }
 }
-async function scanStatusDirectory(root, status) {
-  if (!root) return 0;
+async function findNumberedChild(root, number) {
   const stat = await fsp.stat(root).catch(() => null);
-  if (!stat?.isDirectory()) return 0;
+  if (!stat?.isDirectory()) return '';
+  const entries = await fsp.readdir(root, { withFileTypes: true }).catch(() => []);
+  const wanted = `${number} `;
+  const match = entries.find((entry) => entry.isDirectory() && entry.name.trimStart().startsWith(wanted));
+  return match ? path.join(root, match.name) : '';
+}
+async function scanStageDirectory(stageRoot, status, destination) {
+  if (!stageRoot) return 0;
   let changed = 0;
-  const queue = [{ dir: root, depth: 0 }];
-  const byName = new Map(db.prepare('SELECT uid, folder_name, status, final_path FROM offers').all().map((r) => [r.folder_name.toLocaleLowerCase('fr'), r]));
+  const queue = [{ dir: stageRoot, depth: 0 }];
+  const byName = new Map(db.prepare('SELECT uid, folder_name, status, final_path, destination_name, base_path, date_ao FROM offers').all().map((r) => [r.folder_name.toLocaleLowerCase('fr'), r]));
   while (queue.length) {
     const { dir, depth } = queue.shift();
     const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
@@ -525,15 +544,16 @@ async function scanStatusDirectory(root, status) {
       const full = path.join(dir, entry.name);
       const offer = byName.get(entry.name.toLocaleLowerCase('fr'));
       if (offer) {
-        if (offer.status !== status || offer.final_path !== full) {
-          db.prepare('UPDATE offers SET status=?, final_path=?, last_actor_pc=?, updated_at=? WHERE uid=?').run(status, full, 'SYSTEM', nowIso(), offer.uid);
+        if (offer.status !== status || offer.final_path !== full || offer.destination_name !== destination.name || offer.base_path !== destination.path) {
+          db.prepare("UPDATE offers SET status=?, final_path=?, destination_id=NULL, destination_name=?, base_path=?, department='', due_date=date_ao, last_actor_pc=?, updated_at=? WHERE uid=?")
+            .run(status, full, destination.name, destination.path, 'SYSTEM', nowIso(), offer.uid);
           const fresh = offerByUid(offer.uid);
-          queueEvent({ type:'offer.snapshot', offerUid:offer.uid, payload:{offer:serializeOffer(fresh)}, action:`Statut détecté : ${status === 'gagne' ? 'Gagné' : 'Perdu'}`, details:full, department:fresh.department, status });
+          queueEvent({ type:'offer.snapshot', offerUid:offer.uid, payload:{offer:serializeOffer(fresh)}, action:`Statut détecté : ${status}`, details:full, status });
           changed += 1;
         }
         continue;
       }
-      if (depth < 2) queue.push({ dir: full, depth: depth + 1 });
+      if (depth < 4) queue.push({ dir: full, depth: depth + 1 });
     }
   }
   return changed;
@@ -543,9 +563,16 @@ async function scanStatuses() {
   if (scanBusy) return { changed: 0 };
   scanBusy = true;
   try {
-    const won = await scanStatusDirectory(getSetting('won_path'), 'gagne');
-    const lost = await scanStatusDirectory(getSetting('lost_path'), 'perdu');
-    return { changed: won + lost };
+    let changed = 0;
+    const destinations = db.prepare('SELECT id,name,path FROM transfer_destinations ORDER BY name COLLATE NOCASE').all();
+    const stages = [[2,'en_cours'],[3,'envoye'],[4,'gagne'],[5,'perdu']];
+    for (const destination of destinations) {
+      for (const [number,status] of stages) {
+        const stageRoot = await findNumberedChild(destination.path, number);
+        if (stageRoot) changed += await scanStageDirectory(stageRoot, status, destination);
+      }
+    }
+    return { changed };
   } finally { scanBusy = false; }
 }
 
@@ -559,34 +586,22 @@ app.put('/api/settings/shared', async (req, res) => {
   const masterRoot=String(req.body?.masterRoot||'').trim();
   const previousRoot=getSetting('master_root');
   const seededRoot=getSetting('master_seeded_root');
-
-  // Capturer uniquement ce qui existait réellement sur ce poste avant de rejoindre
-  // la base maître. Si la base commune existe déjà, sa configuration devient la
-  // référence, mais l'historique local propre à ce poste est fusionné.
   const localOffersBefore=db.prepare('SELECT * FROM offers ORDER BY created_at,id').all().map(serializeOffer);
   const localActorsBefore=db.prepare("SELECT pc_id,display_name FROM actors WHERE display_name<>''").all();
-
   putSetting('master_root',masterRoot);
-  putSetting('won_path',String(req.body?.wonPath||'').trim());
-  putSetting('lost_path',String(req.body?.lostPath||'').trim());
-
   if(masterRoot&&seededRoot!==masterRoot){
     const base=await ensureMasterFolders();
     const existingMaster=await masterHasOtherPeerData(base);
-
     if(existingMaster){
-      // Lire d'abord la référence commune : un nouveau poste vide ne doit jamais
-      // écraser les destinations/arborescence du groupe.
       await pullRemoteEvents(base);
     }else{
       const configAt=nowIso();
       putSetting('shared_config_updated_at',configAt);
       putSetting('shared_config_actor',PEER_ID);
-      queueEvent({type:'config.snapshot',payload:{config:sharedConfigSnapshot()},action:'Configuration locale partagée',details:'Destinations et arborescence initiales'});
+      queueEvent({type:'config.snapshot',payload:{config:sharedConfigSnapshot()},action:'Configuration locale partagée',details:'Destinations création/transfert et arborescence initiales'});
     }
-
     for(const offer of localOffersBefore){
-      queueEvent({type:'offer.snapshot',offerUid:offer.uid,payload:{offer},action:'AO existant partagé',details:offer.folderName,department:offer.department,status:offer.status});
+      queueEvent({type:'offer.snapshot',offerUid:offer.uid,payload:{offer},action:'AO existant partagé',details:offer.folderName,status:offer.status});
     }
     for(const actor of localActorsBefore){
       queueEvent({type:'actor.set',payload:{pcId:actor.pc_id,displayName:actor.display_name},action:'Nom utilisateur partagé',details:`${actor.pc_id} → ${actor.display_name}`});
@@ -600,7 +615,6 @@ app.put('/api/settings/shared', async (req, res) => {
   }else{
     await syncMaster();
   }
-
   res.json(publicSettings());
 });
 app.get('/api/sync/status', (_req, res) => res.json({ configured: !!getSetting('master_root'), peerId: PEER_ID, lastSync, error: lastSyncError }));
@@ -636,12 +650,11 @@ app.post('/api/offers', async (req, res) => {
   try {
     const destinationId = Number(req.body?.destinationId);
     const destination = db.prepare('SELECT id,name,path FROM destinations WHERE id=?').get(destinationId);
-    if (!destination) throw new Error('Choisissez une destination configurée.');
+    if (!destination) throw new Error('Choisissez une destination de création configurée.');
     const payload = {
       date:String(req.body?.date || ''), ca:sanitizeSegment(req.body?.ca,{upper:true}), be:sanitizeSegment(req.body?.be,{upper:true}),
       client:sanitizeSegment(req.body?.client,{upper:true}), title:sanitizeSegment(req.body?.title), commercial:sanitizeSegment(req.body?.commercial,{upper:true}),
-      quoteNumber:sanitizeSegment(req.body?.quoteNumber,{upper:true}), contact:String(req.body?.contact ?? ''), dueDate:String(req.body?.dueDate || ''),
-      department:String(req.body?.department || '').trim()
+      quoteNumber:sanitizeSegment(req.body?.quoteNumber,{upper:true}), contact:String(req.body?.contact ?? '')
     };
     const folderName = buildFolderName(payload);
     const tree = readTree(); assertNoDuplicateSiblings(tree);
@@ -649,9 +662,9 @@ app.post('/api/offers', async (req, res) => {
     await writeContactsFile({ fs:fsp, rootPath:finalPath, contact:payload.contact });
     const uid = crypto.randomUUID(); const at = nowIso();
     db.prepare(`INSERT INTO offers (uid,folder_name,date_ao,ca,be,client,title,commercial,quote_number,contact,destination_id,destination_name,base_path,final_path,department,status,due_date,created_by_pc,last_actor_pc,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid,folderName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,destination.id,destination.name,destination.path,finalPath,payload.department,'a_attribuer',payload.dueDate,PEER_ID,PEER_ID,at,at);
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid,folderName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,destination.id,destination.name,destination.path,finalPath,'','a_attribuer',payload.date,PEER_ID,PEER_ID,at,at);
     const fresh = offerByUid(uid);
-    queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'AO créé', details:folderName, department:fresh.department, status:fresh.status });
+    queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'AO créé', details:folderName, status:fresh.status });
     await syncMaster();
     res.status(201).json(offerPublic(fresh));
   } catch (error) {
@@ -665,19 +678,11 @@ app.patch('/api/offers/:uid', (req, res) => {
   try {
     const uid = String(req.params.uid);
     const current = offerByUid(uid); if (!current) return res.status(404).json({error:'Appel d’offres introuvable.'});
-    const status = req.body?.status === undefined ? current.status : normalizeStatus(req.body.status);
-    const department = req.body?.department === undefined ? current.department : String(req.body.department || '').trim();
-    const dueDate = req.body?.dueDate === undefined ? current.due_date : String(req.body.dueDate || '');
     const remark = req.body?.remark === undefined ? current.remark : String(req.body.remark || '').trim();
     const at = nowIso();
-    db.prepare('UPDATE offers SET status=?,department=?,due_date=?,remark=?,last_actor_pc=?,updated_at=? WHERE uid=?').run(status,department,dueDate,remark,PEER_ID,at,uid);
+    db.prepare("UPDATE offers SET due_date=date_ao,department='',remark=?,last_actor_pc=?,updated_at=? WHERE uid=?").run(remark,PEER_ID,at,uid);
     const fresh = offerByUid(uid);
-    const changed = [];
-    if (status !== current.status) changed.push(`statut ${current.status} → ${status}`);
-    if (department !== current.department) changed.push(`département ${current.department || '—'} → ${department || '—'}`);
-    if (dueDate !== current.due_date) changed.push(`échéance ${dueDate || '—'}`);
-    if (remark !== current.remark) changed.push('remarque modifiée');
-    queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'Suivi AO modifié', details:changed.join(' · '), department:fresh.department, status:fresh.status });
+    queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'Suivi AO modifié', details:remark !== current.remark ? 'remarque modifiée' : '', status:fresh.status });
     res.json(offerPublic(fresh));
   } catch (error) { res.status(400).json({error:String(error?.message || error)}); }
 });
@@ -711,7 +716,7 @@ app.post('/api/transfer/inspect', (req, res) => {
   if (byName) return res.json({ tracked:true, offer:offerPublic(byName), parsed:offerPublic(byName) });
   const parsed = parseFolderName(name);
   if (!parsed) return res.status(400).json({error:'Le nom du dossier ne correspond pas à un AO reconnu.'});
-  res.json({ tracked:false, offer:null, parsed:{...parsed, folderName:name, finalPath:selectedPath, contact:'', department:'', dueDate:''} });
+  res.json({ tracked:false, offer:null, parsed:{...parsed, folderName:name, finalPath:selectedPath, contact:'', dueDate:parsed.date || ''} });
 });
 
 app.post('/api/transfer/execute', async (req, res) => {
@@ -720,15 +725,17 @@ app.post('/api/transfer/execute', async (req, res) => {
     const sourcePath = String(req.body?.sourcePath || '').trim();
     if (!sourcePath) throw new Error('Dossier source obligatoire.');
     const destinationId = Number(req.body?.destinationId);
-    const destination = db.prepare('SELECT id,name,path FROM destinations WHERE id=?').get(destinationId);
-    if (!destination) throw new Error('Destination introuvable.');
+    const destination = db.prepare('SELECT id,name,path FROM transfer_destinations WHERE id=?').get(destinationId);
+    if (!destination) throw new Error('Destination de transfert introuvable.');
+    const stageTwo = await findNumberedChild(destination.path, 2);
+    if (!stageTwo) throw new Error(`Aucun sous-dossier commençant par « 2 » dans ${destination.name}. Vérifiez le chemin de la destination de transfert.`);
     const payload = {
       date:String(req.body?.date || ''), ca:sanitizeSegment(req.body?.ca,{upper:true}), be:sanitizeSegment(req.body?.be,{upper:true}), client:sanitizeSegment(req.body?.client,{upper:true}),
       title:sanitizeSegment(req.body?.title), commercial:sanitizeSegment(req.body?.commercial,{upper:true}), quoteNumber:sanitizeSegment(req.body?.quoteNumber,{upper:true}),
-      contact:String(req.body?.contact ?? ''), department:String(req.body?.department || destination.name).trim(), dueDate:String(req.body?.dueDate || '')
+      contact:String(req.body?.contact ?? '')
     };
     const newName = buildFolderName(payload);
-    const targetPath = path.join(destination.path, newName);
+    const targetPath = path.join(stageTwo, newName);
     let uid = String(req.body?.offerUid || '').trim();
     const existing = uid ? offerByUid(uid) : db.prepare('SELECT * FROM offers WHERE lower(final_path)=lower(?) OR lower(folder_name)=lower(?) ORDER BY updated_at DESC LIMIT 1').get(sourcePath,path.basename(sourcePath));
     if (!uid && existing) uid = existing.uid;
@@ -737,14 +744,14 @@ app.post('/api/transfer/execute', async (req, res) => {
     await moveDirectory(sourcePath, targetPath);
     const at = nowIso();
     if (existing) {
-      db.prepare(`UPDATE offers SET folder_name=?,date_ao=?,ca=?,be=?,client=?,title=?,commercial=?,quote_number=?,contact=?,destination_id=?,destination_name=?,base_path=?,final_path=?,department=?,status='en_cours',due_date=?,last_actor_pc=?,updated_at=? WHERE uid=?`)
-        .run(newName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,destination.id,destination.name,destination.path,targetPath,payload.department,payload.dueDate,PEER_ID,at,uid);
+      db.prepare(`UPDATE offers SET folder_name=?,date_ao=?,ca=?,be=?,client=?,title=?,commercial=?,quote_number=?,contact=?,destination_id=NULL,destination_name=?,base_path=?,final_path=?,department='',status='en_cours',due_date=?,last_actor_pc=?,updated_at=? WHERE uid=?`)
+        .run(newName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,destination.name,destination.path,targetPath,payload.date,PEER_ID,at,uid);
     } else {
       db.prepare(`INSERT INTO offers (uid,folder_name,date_ao,ca,be,client,title,commercial,quote_number,contact,destination_id,destination_name,base_path,final_path,department,status,due_date,created_by_pc,last_actor_pc,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid,newName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,destination.id,destination.name,destination.path,targetPath,payload.department,'en_cours',payload.dueDate,PEER_ID,PEER_ID,at,at);
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid,newName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,null,destination.name,destination.path,targetPath,'','en_cours',payload.date,PEER_ID,PEER_ID,at,at);
     }
     const fresh = offerByUid(uid);
-    queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'AO transféré', details:`${sourcePath} → ${targetPath}`, department:fresh.department, status:fresh.status });
+    queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'AO transféré', details:`${sourcePath} → ${targetPath}`, status:fresh.status });
     await syncMaster();
     res.json(offerPublic(fresh));
   } catch (error) {
@@ -757,23 +764,31 @@ app.post('/api/bootstrap/import', (req, res) => {
   try {
     const template = req.body?.template || {};
     const destinations = Array.isArray(template.destinations) ? template.destinations : [];
+    const transferDestinations = Array.isArray(template.transferDestinations) ? template.transferDestinations : [];
     const tree = normalizeTree(template.tree);
-    if (!destinations.length) throw new Error('Le modèle ne contient aucune destination.');
+    if (!destinations.length) throw new Error('Le modèle ne contient aucune destination de création.');
     const tx = db.transaction(() => {
       db.prepare('DELETE FROM destinations').run();
-      const insert = db.prepare('INSERT INTO destinations (name,path) VALUES (?,?)');
-      for (const d of destinations) insert.run(sanitizeSegment(d.name), cleanDestinationPath(d.path));
+      db.prepare('DELETE FROM transfer_destinations').run();
+      const insertCreation = db.prepare('INSERT INTO destinations (name,path) VALUES (?,?)');
+      const insertTransfer = db.prepare('INSERT INTO transfer_destinations (name,path) VALUES (?,?)');
+      for (const d of destinations) insertCreation.run(sanitizeSegment(d.name), cleanDestinationPath(d.path));
+      for (const d of transferDestinations) insertTransfer.run(sanitizeSegment(d.name), cleanDestinationPath(d.path));
       putSetting('folder_tree', JSON.stringify(tree)); putSetting('bootstrap_complete','1');
     }); tx(); queueSharedConfig('Modèle de démarrage importé'); void syncMaster(); res.json(publicSettings());
   } catch (error) { res.status(400).json({error:String(error?.message || error)}); }
 });
 app.post('/api/bootstrap/skip', (_req,res) => { putSetting('bootstrap_complete','1'); res.json(publicSettings()); });
-app.post('/api/destinations', (req,res) => {
-  try { const name=sanitizeSegment(req.body?.name), p=cleanDestinationPath(req.body?.path); if(!name) throw new Error('Nom obligatoire.'); const info=db.prepare('INSERT INTO destinations (name,path) VALUES (?,?)').run(name,p); queueSharedConfig('Destination ajoutée'); void syncMaster(); res.status(201).json(db.prepare('SELECT id,name,path FROM destinations WHERE id=?').get(info.lastInsertRowid)); }
-  catch(error){res.status(String(error.message).includes('UNIQUE')?409:400).json({error:String(error.message).includes('UNIQUE')?'Ce nom de destination existe déjà.':String(error.message||error)});}
-});
-app.put('/api/destinations/:id',(req,res)=>{try{const id=Number(req.params.id),name=sanitizeSegment(req.body?.name),p=cleanDestinationPath(req.body?.path);const info=db.prepare('UPDATE destinations SET name=?,path=? WHERE id=?').run(name,p,id);if(!info.changes)return res.status(404).json({error:'Destination introuvable.'});queueSharedConfig('Destination modifiée');void syncMaster();res.json(db.prepare('SELECT id,name,path FROM destinations WHERE id=?').get(id));}catch(error){res.status(400).json({error:String(error.message||error)});}});
-app.delete('/api/destinations/:id',(req,res)=>{const info=db.prepare('DELETE FROM destinations WHERE id=?').run(Number(req.params.id));if(!info.changes)return res.status(404).json({error:'Destination introuvable.'});queueSharedConfig('Destination supprimée');void syncMaster();res.status(204).end();});
+function destinationCrud(prefix, table, label) {
+  app.post(prefix, (req,res) => {
+    try { const name=sanitizeSegment(req.body?.name), p=cleanDestinationPath(req.body?.path); if(!name) throw new Error('Nom obligatoire.'); const info=db.prepare(`INSERT INTO ${table} (name,path) VALUES (?,?)`).run(name,p); queueSharedConfig(`${label} ajoutée`); void syncMaster(); res.status(201).json(db.prepare(`SELECT id,name,path FROM ${table} WHERE id=?`).get(info.lastInsertRowid)); }
+    catch(error){res.status(String(error.message).includes('UNIQUE')?409:400).json({error:String(error.message).includes('UNIQUE')?'Ce nom de destination existe déjà.':String(error.message||error)});}
+  });
+  app.put(`${prefix}/:id`,(req,res)=>{try{const id=Number(req.params.id),name=sanitizeSegment(req.body?.name),p=cleanDestinationPath(req.body?.path);const info=db.prepare(`UPDATE ${table} SET name=?,path=? WHERE id=?`).run(name,p,id);if(!info.changes)return res.status(404).json({error:'Destination introuvable.'});queueSharedConfig(`${label} modifiée`);void syncMaster();res.json(db.prepare(`SELECT id,name,path FROM ${table} WHERE id=?`).get(id));}catch(error){res.status(400).json({error:String(error.message||error)});}});
+  app.delete(`${prefix}/:id`,(req,res)=>{const info=db.prepare(`DELETE FROM ${table} WHERE id=?`).run(Number(req.params.id));if(!info.changes)return res.status(404).json({error:'Destination introuvable.'});queueSharedConfig(`${label} supprimée`);void syncMaster();res.status(204).end();});
+}
+destinationCrud('/api/destinations','destinations','Destination de création');
+destinationCrud('/api/transfer-destinations','transfer_destinations','Destination de transfert');
 app.put('/api/tree',(req,res)=>{try{const tree=normalizeTree(req.body?.tree);assertNoDuplicateSiblings(tree);putSetting('folder_tree',JSON.stringify(tree));queueSharedConfig('Arborescence modifiée');void syncMaster();res.json({tree});}catch(error){res.status(400).json({error:String(error.message||error)});}});
 
 if (fs.existsSync(DIST_DIR)) {

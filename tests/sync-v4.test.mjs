@@ -115,18 +115,18 @@ test('deux PC convergent via la base maître et partagent aussi la configuration
     assert.equal(offersB.length, 1);
     assert.equal(offersB[0].uid, created.uid);
     assert.equal(offersB[0].client, 'CLIENT');
-    assert.equal(offersB[0].department, 'CET');
+    assert.equal(offersB[0].department, '');
 
     await request(b.base, `/api/offers/${created.uid}`, {
       method: 'PATCH',
-      body: JSON.stringify({ status: 'envoye' })
+      body: JSON.stringify({ remark: 'modifié depuis PC-B' })
     });
     await request(b.base, '/api/sync/run', { method: 'POST' });
     await request(a.base, '/api/sync/run', { method: 'POST' });
 
     const offersA = await request(a.base, '/api/offers');
     assert.equal(offersA.length, 1);
-    assert.equal(offersA[0].status, 'envoye');
+    assert.equal(offersA[0].remark, 'modifié depuis PC-B');
     assert.equal(offersA[0].lastActorPc, 'PC-B');
 
     const logsA = await request(a.base, '/api/logs');
