@@ -411,6 +411,16 @@ async function ensureMasterFolders() {
   await fsp.mkdir(path.join(base, 'locks'), { recursive: true });
   return base;
 }
+async function masterHasOtherPeerData(base) {
+  const peersRoot=path.join(base,'peers');
+  const entries=await fsp.readdir(peersRoot,{withFileTypes:true}).catch(()=>[]);
+  for(const entry of entries){
+    if(!entry.isDirectory()||sanitizePeer(entry.name)===PEER_ID)continue;
+    try{const index=JSON.parse(await fsp.readFile(path.join(peersRoot,entry.name,'index.json'),'utf8'));if(Number(index?.latest||0)>0)return true;}catch{}
+  }
+  return false;
+}
+
 async function pushLocalEvents(base) {
   const peerDir = path.join(base, 'peers', PEER_ID);
   const eventsDir = path.join(peerDir, 'events');
@@ -543,49 +553,51 @@ app.use(express.json({ limit: '2mb' }));
 app.get('/api/health', (_req, res) => res.json({ ok: true, database: DB_FILE, peerId: PEER_ID }));
 app.get('/api/settings', (_req, res) => res.json(publicSettings()));
 app.put('/api/settings/shared', async (req, res) => {
-  const masterRoot = String(req.body?.masterRoot || '').trim();
-  const previousRoot = getSetting('master_root');
-  putSetting('master_root', masterRoot);
-  putSetting('won_path', String(req.body?.wonPath || '').trim());
-  putSetting('lost_path', String(req.body?.lostPath || '').trim());
+  const masterRoot=String(req.body?.masterRoot||'').trim();
+  const previousRoot=getSetting('master_root');
+  const seededRoot=getSetting('master_seeded_root');
 
-  // Lors de la première association à une base maître, publier aussi l'historique
-  // déjà présent sur ce poste. Les anciens AO utilisent un UID déterministe dérivé
-  // du nom du dossier, afin que deux postes possédant le même historique ne créent
-  // pas deux lignes différentes dans la base commune.
-  const seededRoot = getSetting('master_seeded_root');
-  if (masterRoot && seededRoot !== masterRoot) {
-    const existingOffers = db.prepare('SELECT * FROM offers ORDER BY created_at, id').all();
-    for (const offer of existingOffers) {
-      queueEvent({
-        type: 'offer.snapshot',
-        offerUid: offer.uid,
-        payload: { offer: serializeOffer(offer) },
-        action: 'AO existant partagé',
-        details: offer.folder_name,
-        department: offer.department,
-        status: offer.status
-      });
+  // Capturer uniquement ce qui existait réellement sur ce poste avant de rejoindre
+  // la base maître. Si la base commune existe déjà, sa configuration devient la
+  // référence, mais l'historique local propre à ce poste est fusionné.
+  const localOffersBefore=db.prepare('SELECT * FROM offers ORDER BY created_at,id').all().map(serializeOffer);
+  const localActorsBefore=db.prepare("SELECT pc_id,display_name FROM actors WHERE display_name<>''").all();
+
+  putSetting('master_root',masterRoot);
+  putSetting('won_path',String(req.body?.wonPath||'').trim());
+  putSetting('lost_path',String(req.body?.lostPath||'').trim());
+
+  if(masterRoot&&seededRoot!==masterRoot){
+    const base=await ensureMasterFolders();
+    const existingMaster=await masterHasOtherPeerData(base);
+
+    if(existingMaster){
+      // Lire d'abord la référence commune : un nouveau poste vide ne doit jamais
+      // écraser les destinations/arborescence du groupe.
+      await pullRemoteEvents(base);
+    }else{
+      const configAt=nowIso();
+      putSetting('shared_config_updated_at',configAt);
+      putSetting('shared_config_actor',PEER_ID);
+      queueEvent({type:'config.snapshot',payload:{config:sharedConfigSnapshot()},action:'Configuration locale partagée',details:'Destinations et arborescence initiales'});
     }
-    const configAt = nowIso();
-    putSetting('shared_config_updated_at', configAt);
-    putSetting('shared_config_actor', PEER_ID);
-    queueEvent({ type:'config.snapshot', payload:{config:sharedConfigSnapshot()}, action:'Configuration locale partagée', details:'Destinations et arborescence initiales' });
-    const knownActors = db.prepare("SELECT pc_id, display_name FROM actors WHERE display_name <> ''").all();
-    for (const actor of knownActors) {
-      queueEvent({
-        type: 'actor.set',
-        payload: { pcId: actor.pc_id, displayName: actor.display_name },
-        action: 'Nom utilisateur partagé',
-        details: `${actor.pc_id} → ${actor.display_name}`
-      });
+
+    for(const offer of localOffersBefore){
+      queueEvent({type:'offer.snapshot',offerUid:offer.uid,payload:{offer},action:'AO existant partagé',details:offer.folderName,department:offer.department,status:offer.status});
     }
-    putSetting('master_seeded_root', masterRoot);
-  } else if (!masterRoot && previousRoot) {
-    putSetting('master_seeded_root', '');
+    for(const actor of localActorsBefore){
+      queueEvent({type:'actor.set',payload:{pcId:actor.pc_id,displayName:actor.display_name},action:'Nom utilisateur partagé',details:`${actor.pc_id} → ${actor.display_name}`});
+    }
+    putSetting('master_seeded_root',masterRoot);
+    await pushLocalEvents(base);
+    await pullRemoteEvents(base);
+    lastSync=nowIso();lastSyncError='';
+  }else if(!masterRoot&&previousRoot){
+    putSetting('master_seeded_root','');
+  }else{
+    await syncMaster();
   }
 
-  await syncMaster();
   res.json(publicSettings());
 });
 app.get('/api/sync/status', (_req, res) => res.json({ configured: !!getSetting('master_root'), peerId: PEER_ID, lastSync, error: lastSyncError }));
