@@ -13,6 +13,7 @@
 - identification automatique par nom de PC et correspondance PC → personne modifiable ;
 - aucune restriction de département liée à une personne ;
 - base maître sans service applicatif : journal partagé sur un dossier réseau et SQLite local par poste, synchronisés toutes les 5 secondes ;
+- au premier rattachement à la base maître, l’historique local existant est partagé ; les anciens AO utilisent un identifiant déterministe basé sur leur nom afin d’éviter les doublons entre postes ;
 - scan configurable des dossiers Gagnés et Perdus ;
 - verrou temporaire lors du transfert d’un même AO depuis plusieurs postes, avec récupération automatique d’un verrou abandonné ;
 - migration des bases v0.3 durcie afin de conserver les données locales et les relances existantes lors du passage à la v0.4.
