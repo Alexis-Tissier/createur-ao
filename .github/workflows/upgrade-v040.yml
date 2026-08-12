@@ -33,3 +33,5 @@ jobs:
           git add -A
           git commit -m "feat: shared AO tracking and transfer workflow"
           git push
+
+# retrigger after v0.4 sources were added
