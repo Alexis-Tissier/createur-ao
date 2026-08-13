@@ -27,6 +27,40 @@ jobs:
         run: npm ci
       - name: Validate
         run: npm run check
+      - name: Sanitize Windows PNG
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $src = (Resolve-Path 'build/icon.png').Path
+          $tmp = Join-Path (Split-Path $src) 'icon-clean.png'
+          $input = [System.Drawing.Image]::FromFile($src)
+          try {
+            $bitmap = [System.Drawing.Bitmap]::new(256, 256, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            try {
+              $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+              try {
+                $graphics.Clear([System.Drawing.Color]::Transparent)
+                $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+                $graphics.DrawImage($input, 0, 0, 256, 256)
+              } finally {
+                $graphics.Dispose()
+              }
+              $bitmap.Save($tmp, [System.Drawing.Imaging.ImageFormat]::Png)
+            } finally {
+              $bitmap.Dispose()
+            }
+          } finally {
+            $input.Dispose()
+          }
+          Move-Item -Force $tmp $src
+          $check = [System.Drawing.Image]::FromFile($src)
+          try {
+            if ($check.Width -ne 256 -or $check.Height -ne 256) { throw 'PNG Windows nettoyé invalide' }
+            Write-Host "PNG Windows nettoyé: $($check.Width)x$($check.Height), Format32bppArgb"
+          } finally {
+            $check.Dispose()
+          }
       - name: Build NSIS setup
         run: npx electron-builder --win nsis --x64 --publish never
       - name: Verify embedded Windows icon
@@ -60,4 +94,4 @@ jobs:
             --target "$GITHUB_SHA" \
             --prerelease \
             --title "Créateur d'AO v0.4.1 beta 10" \
-            --notes "Correction de l'icône Windows : suppression de l'ICO artisanal. Electron et electron-builder utilisent désormais directement le PNG 256x256 du nouveau logo, afin que l'icône apparaisse dans la barre de titre, la barre des tâches et l'exécutable Windows."
+            --notes "Correction de l'icône Windows : le nouveau logo est réencodé en PNG Windows propre avant packaging. Electron utilise ce PNG pour la barre de titre, et electron-builder génère lui-même la ressource native de l'exécutable et de la barre des tâches."
