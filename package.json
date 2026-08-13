@@ -3,7 +3,7 @@
   "version": "0.4.1-beta.10",
   "private": true,
   "type": "module",
-  "description": "Création, transfert et suivi partagé multi-postes des appels d'offres.",
+  "description": "Création, transfert et suivi partagé multi-postes des appels d'offres Windows.",
   "author": "Alexis Tissier",
   "main": "desktop/main.cjs",
   "engines": {
