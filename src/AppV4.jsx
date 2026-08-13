@@ -79,7 +79,7 @@ function formatPriceCurrency(value){
   const raw=rawPriceInput(value);
   const number=Number(raw);
   if(!raw||!Number.isFinite(number))return String(value||'');
-  return new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR',minimumFractionDigits:0,maximumFractionDigits:2}).format(number);
+  return `${new Intl.NumberFormat('fr-FR',{minimumFractionDigits:0,maximumFractionDigits:2}).format(number).replace(/[\u00a0\u202f]/g,' ')}€`;
 }
 function Field({ label, children, wide = false }) { return <label className={`v4-field ${wide ? 'wide' : ''}`}><span>{label}</span>{children}</label>; }
 function Toast({ value, close }) {
@@ -217,7 +217,7 @@ function TrackingRowV4({row,followup,reload,toast}){
     <div className="destination-chip">{row.destinationName||'Création'}</div>
     <div className={`status-badge ${row.status}`}>{STATUS[row.status]||row.status}</div>
     <div className="v4-date-cell">{row.date ? new Date(`${row.date}T12:00:00`).toLocaleDateString('fr-FR') : '—'}</div>
-    <div className="v4-track-actions"><div className="muted-cell"><strong>{row.lastActorName||row.lastActorPc||'—'}</strong><small>{row.updatedAt?new Date(row.updatedAt).toLocaleString('fr-FR'):''}</small></div><button type="button" className="small-action" onClick={followup}>Relance</button><small>{row.lastFollowupAt?`${row.lastFollowupAt} · ${row.followupCount}`:'Aucune relance'}</small></div>
+    <div className="v4-track-actions"><div className="muted-cell" title="Créateur de l’AO · nom modifiable dans Réglages > Personnes"><strong>{row.createdByName||row.createdByPc||'—'}</strong><small>{row.createdAt?new Date(row.createdAt).toLocaleString('fr-FR'):''}</small></div><button type="button" className="small-action" onClick={followup}>Relance</button><small>{row.lastFollowupAt?`${row.lastFollowupAt} · ${row.followupCount}`:'Aucune relance'}</small></div>
   </div>;
 }
 
@@ -233,11 +233,11 @@ function TrackingPage({ offers, reload, toast }) {
       await reload();
       if(r.missing)toast({message:`${r.missing} dossier(s) introuvable(s) détecté(s).`});
       else if(r.changed)toast({message:`${r.changed} changement(s) détecté(s)${r.prices?` · ${r.prices} prix mis à jour`:''}.`});
-      else toast({message:'Scan terminé · aucun changement détecté.'});
+      else toast({message:`Scan terminé en ${Math.max(0,Number(r.durationMs||0))/1000 < 1 ? '< 1' : (Number(r.durationMs||0)/1000).toFixed(1)} s · aucun changement détecté.`});
     }catch(error){toast({type:'error',message:error.message});}
     finally{setScanning(false);}
   }
-  return <main className="content history-page v4-compact-page"><header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button type="button" className="secondary-button" onClick={scan} disabled={scanning}><Icon name="refresh" size={15}/>{scanning?'Scan en cours…':'Scanner les emplacements'}</button></header><div className="v4-filters v4-filters-3"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={destination} onChange={e=>setDestination(e.target.value)}><option value="">Toutes les destinations</option>{destinations.map(d=><option key={d}>{d}</option>)}</select></div><section className="v4-table-card"><div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Contact</span><span>Prix</span><span>Destination</span><span>Statut</span><span>Échéance</span><span>Suivi</span></div>{!rows.length?<div className="empty-state"><strong>Aucun AO</strong></div>:rows.map(row=><TrackingRowV4 key={row.uid} row={row} reload={reload} toast={toast} followup={()=>setFollowup(row)}/>)}</section>{followup&&<FollowupModalV4 row={followup} close={()=>setFollowup(null)} reload={reload} toast={toast}/>}</main>;
+  return <main className="content history-page v4-compact-page"><header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button type="button" className="secondary-button" onClick={scan} disabled={scanning}><Icon name="refresh" size={15}/>{scanning?'Scan en cours…':'Scanner les emplacements'}</button></header><div className="v4-filters v4-filters-3"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={destination} onChange={e=>setDestination(e.target.value)}><option value="">Toutes les destinations</option>{destinations.map(d=><option key={d}>{d}</option>)}</select></div><section className="v4-table-card"><div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Contact</span><span>Prix</span><span>Destination</span><span>Statut</span><span>Échéance</span><span>Créateur / suivi</span></div>{!rows.length?<div className="empty-state"><strong>Aucun AO</strong></div>:rows.map(row=><TrackingRowV4 key={row.uid} row={row} reload={reload} toast={toast} followup={()=>setFollowup(row)}/>)}</section>{followup&&<FollowupModalV4 row={followup} close={()=>setFollowup(null)} reload={reload} toast={toast}/>}</main>;
 }
 
 function LogsPage({ toast }) {

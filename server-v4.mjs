@@ -560,106 +560,144 @@ async function findNumberedChild(root, number) {
   const match = entries.find((entry) => entry.isDirectory() && entry.name.trimStart().startsWith(wanted));
   return match ? path.join(root, match.name) : '';
 }
-async function scanStageDirectory(stageRoot, status, destination) {
-  if (!stageRoot) return 0;
-  let changed = 0;
-  const queue = [{ dir: stageRoot, depth: 0 }];
-  const byName = new Map(db.prepare('SELECT uid, folder_name, status, final_path, destination_name, base_path, date_ao FROM offers').all().map((r) => [r.folder_name.toLocaleLowerCase('fr'), r]));
-  while (queue.length) {
-    const { dir, depth } = queue.shift();
-    const entries = await fsp.readdir(dir, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const full = path.join(dir, entry.name);
-      const offer = byName.get(entry.name.toLocaleLowerCase('fr'));
-      if (offer) {
-        if (offer.status !== status || offer.final_path !== full || offer.destination_name !== destination.name || offer.base_path !== destination.path) {
-          db.prepare("UPDATE offers SET status=?, final_path=?, destination_id=NULL, destination_name=?, base_path=?, department='', due_date=date_ao, last_actor_pc=?, updated_at=? WHERE uid=?")
-            .run(status, full, destination.name, destination.path, 'SYSTEM', nowIso(), offer.uid);
-          const fresh = offerByUid(offer.uid);
-          queueEvent({ type:'offer.snapshot', offerUid:offer.uid, payload:{offer:serializeOffer(fresh)}, action:`Statut détecté : ${status}`, details:full, status });
-          changed += 1;
-        }
-        continue;
-      }
-      if (depth < 4) queue.push({ dir: full, depth: depth + 1 });
-    }
+async function readDirectoryNames(root) {
+  try {
+    const entries = await fsp.readdir(root, { withFileTypes: true });
+    return { ok: true, names: entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name) };
+  } catch {
+    return { ok: false, names: [] };
   }
-  return changed;
+}
+function pathKey(value) {
+  return path.resolve(String(value || '')).toLocaleLowerCase('fr');
+}
+function offerNameKey(value) {
+  return String(value || '').toLocaleLowerCase('fr');
+}
+function updateDetectedOffer(offer, { status, finalPath, destinationName, basePath }) {
+  if (offer.status === status && offer.final_path === finalPath && offer.destination_name === destinationName && offer.base_path === basePath) return 0;
+  const at = nowIso();
+  db.prepare("UPDATE offers SET status=?, final_path=?, destination_id=NULL, destination_name=?, base_path=?, department='', due_date=date_ao, last_actor_pc=?, updated_at=? WHERE uid=?")
+    .run(status, finalPath, destinationName, basePath, 'SYSTEM', at, offer.uid);
+  const fresh = offerByUid(offer.uid);
+  queueEvent({ type:'offer.snapshot', offerUid:offer.uid, payload:{offer:serializeOffer(fresh)}, action:`Statut détecté : ${status}`, details:finalPath, status });
+  return 1;
 }
 let scanBusy = false;
-async function waitForScanIdle(timeoutMs = 20000) {
-  const deadline = Date.now() + timeoutMs;
-  while (scanBusy && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 75));
-  if (scanBusy) throw new Error('Le scan précédent prend trop de temps. Réessayez dans quelques secondes.');
-}
-async function markMissingOffers() {
-  let changed = 0;
-  const rows = db.prepare('SELECT uid,folder_name,status,final_path,base_path FROM offers').all();
-  for (const row of rows) {
-    if (!row.final_path) continue;
-    const finalStat = await fsp.stat(row.final_path).catch(() => null);
-    if (finalStat?.isDirectory()) {
-      if (row.status === 'introuvable') {
-        db.prepare("UPDATE offers SET status='a_attribuer',last_actor_pc=?,updated_at=? WHERE uid=?").run('SYSTEM', nowIso(), row.uid);
-        const fresh = offerByUid(row.uid);
-        queueEvent({ type:'offer.snapshot', offerUid:row.uid, payload:{offer:serializeOffer(fresh)}, action:'Dossier retrouvé', details:row.final_path, status:fresh.status });
-        changed += 1;
-      }
-      continue;
-    }
-    const baseStat = row.base_path ? await fsp.stat(row.base_path).catch(() => null) : null;
-    if (!baseStat?.isDirectory()) continue; // chemin réseau indisponible : ne pas conclure à une suppression
-    if (row.status === 'introuvable') continue;
-    db.prepare("UPDATE offers SET status='introuvable',last_actor_pc=?,updated_at=? WHERE uid=?").run('SYSTEM', nowIso(), row.uid);
-    const fresh = offerByUid(row.uid);
-    queueEvent({ type:'offer.snapshot', offerUid:row.uid, payload:{offer:serializeOffer(fresh)}, action:'Dossier introuvable', details:row.final_path, status:'introuvable' });
-    changed += 1;
-  }
-  return changed;
-}
-async function syncPricesFromDisk() {
-  let changed=0;
-  const rows=db.prepare('SELECT uid,price,final_path,status FROM offers').all();
-  for(const row of rows){
-    if(!row.final_path)continue;
-    const stat=await fsp.stat(row.final_path).catch(()=>null);
-    if(!stat?.isDirectory())continue;
-    const disk=await readPriceFile(row.final_path);
-    if(!disk.exists){
-      if(String(row.price||'').trim()) await writePriceFile(row.final_path,row.price).catch(()=>{});
-      continue;
-    }
-    if(disk.value===String(row.price||'').trim())continue;
-    const at=nowIso();
-    db.prepare('UPDATE offers SET price=?,last_actor_pc=?,updated_at=? WHERE uid=?').run(disk.value,'SYSTEM',at,row.uid);
-    const fresh=offerByUid(row.uid);
-    queueEvent({type:'offer.snapshot',offerUid:row.uid,payload:{offer:serializeOffer(fresh)},action:'Prix détecté dans PRIX.txt',details:disk.value||'vide',status:fresh.status});
-    changed+=1;
-  }
-  return changed;
+async function waitForScanIdle() {
+  while (scanBusy) await new Promise((resolve) => setTimeout(resolve, 60));
 }
 async function scanStatuses({ waitForBusy = false } = {}) {
   if (scanBusy) {
     if (!waitForBusy) return { changed: 0, missing: 0, prices: 0, skipped: true };
+    // Pas de timeout artificiel : le clic utilisateur attend le scan courant,
+    // puis effectue réellement un nouveau scan avec l'état disque le plus récent.
     await waitForScanIdle();
   }
+
   scanBusy = true;
+  const startedAt = Date.now();
   try {
     let changed = 0;
-    const destinations = db.prepare('SELECT id,name,path FROM transfer_destinations ORDER BY name COLLATE NOCASE').all();
+    let missing = 0;
+    const offers = db.prepare('SELECT * FROM offers').all();
+    const byName = new Map();
+    for (const offer of offers) {
+      const key = offerNameKey(offer.folder_name);
+      if (!byName.has(key)) byName.set(key, []);
+      byName.get(key).push(offer);
+    }
+
+    const seen = new Set();
+    const safeBases = new Set();
     const stages = [[2,'en_cours'],[3,'envoye'],[4,'gagne'],[5,'perdu']];
-    for (const destination of destinations) {
-      for (const [number,status] of stages) {
-        const stageRoot = await findNumberedChild(destination.path, number);
-        if (stageRoot) changed += await scanStageDirectory(stageRoot, status, destination);
+    const transferDestinations = db.prepare('SELECT id,name,path FROM transfer_destinations ORDER BY name COLLATE NOCASE').all();
+
+    for (const destination of transferDestinations) {
+      // Une seule lecture de la racine du département pour retrouver 2/3/4/5.
+      const root = await readDirectoryNames(destination.path);
+      if (!root.ok) continue;
+      let complete = true;
+      const rootEntries = root.names;
+
+      for (const [number, status] of stages) {
+        const prefix = `${number} `;
+        const stageName = rootEntries.find((name) => name.trimStart().startsWith(prefix));
+        if (!stageName) continue;
+        const stagePath = path.join(destination.path, stageName);
+        const listing = await readDirectoryNames(stagePath);
+        if (!listing.ok) { complete = false; continue; }
+
+        // IMPORTANT : on ne descend pas dans l'AO. Les dossiers internes de chaque
+        // appel d'offres ne servent pas au statut et sont la cause du scan lent.
+        for (const folderName of listing.names) {
+          const candidates = byName.get(offerNameKey(folderName)) || [];
+          for (const offer of candidates) {
+            if (seen.has(offer.uid)) continue;
+            seen.add(offer.uid);
+            changed += updateDetectedOffer(offer, {
+              status,
+              finalPath: path.join(stagePath, folderName),
+              destinationName: destination.name,
+              basePath: destination.path
+            });
+            break;
+          }
+        }
+      }
+      if (complete) safeBases.add(pathKey(destination.path));
+    }
+
+    // Les AO qui n'ont pas encore été transférés sont directement dans les
+    // destinations de création. On liste également ces racines une seule fois.
+    const creationDestinations = db.prepare('SELECT id,name,path FROM destinations ORDER BY name COLLATE NOCASE').all();
+    for (const destination of creationDestinations) {
+      const listing = await readDirectoryNames(destination.path);
+      if (!listing.ok) continue;
+      safeBases.add(pathKey(destination.path));
+      for (const folderName of listing.names) {
+        const candidates = byName.get(offerNameKey(folderName)) || [];
+        for (const offer of candidates) {
+          if (seen.has(offer.uid)) continue;
+          // Un AO déjà attribué à un service est trouvé dans 2/3/4/5 ci-dessus.
+          // Ici on ne restaure que les AO de la zone de création.
+          if (pathKey(offer.base_path) !== pathKey(destination.path) && offer.status !== 'a_attribuer' && offer.status !== 'introuvable') continue;
+          seen.add(offer.uid);
+          if (offer.status === 'introuvable' || offer.final_path !== path.join(destination.path, folderName)) {
+            const at = nowIso();
+            const finalPath = path.join(destination.path, folderName);
+            db.prepare("UPDATE offers SET status='a_attribuer',final_path=?,destination_name=?,base_path=?,last_actor_pc=?,updated_at=? WHERE uid=?")
+              .run(finalPath, destination.name, destination.path, 'SYSTEM', at, offer.uid);
+            const fresh = offerByUid(offer.uid);
+            queueEvent({ type:'offer.snapshot', offerUid:offer.uid, payload:{offer:serializeOffer(fresh)}, action:'Dossier retrouvé', details:finalPath, status:'a_attribuer' });
+            changed += 1;
+          }
+          break;
+        }
       }
     }
-    const missing = await markMissingOffers();
-    const prices = await syncPricesFromDisk();
-    changed += missing + prices;
-    return { changed, missing, prices };
-  } finally { scanBusy = false; }
+
+    // Introuvable n'est évalué qu'APRÈS avoir cherché l'AO dans tous les dossiers
+    // 2/3/4/5. Ainsi un déplacement manuel 2 -> 4 devient directement Gagné.
+    // Si la racine réseau n'a pas pu être lue, on ne conclut jamais à une suppression.
+    for (const offer of offers) {
+      if (!offer.uid || !offer.final_path || seen.has(offer.uid) || offer.status === 'introuvable') continue;
+      if (!safeBases.has(pathKey(offer.base_path))) continue;
+      const at = nowIso();
+      db.prepare("UPDATE offers SET status='introuvable',last_actor_pc=?,updated_at=? WHERE uid=?").run('SYSTEM', at, offer.uid);
+      const fresh = offerByUid(offer.uid);
+      queueEvent({ type:'offer.snapshot', offerUid:offer.uid, payload:{offer:serializeOffer(fresh)}, action:'Dossier introuvable', details:offer.final_path, status:'introuvable' });
+      missing += 1;
+      changed += 1;
+    }
+
+    // Le scan de statut doit rester instantané. PRIX.txt est déjà lu lors du
+    // transfert et écrit lorsque le prix est modifié dans l'application : on ne
+    // fait plus un accès fichier réseau par AO à chaque scan de statut.
+    return { changed, missing, prices: 0, durationMs: Date.now() - startedAt };
+  } finally {
+    scanBusy = false;
+  }
 }
 
 function localDateKey(date = new Date()) {

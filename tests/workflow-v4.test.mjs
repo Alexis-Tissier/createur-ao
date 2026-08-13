@@ -48,7 +48,11 @@ test('échéance=date AO, transfert dédié et dossiers 2/3/4/5', {timeout:25000
     assert.equal(moved.dueDate,'2026-08-12');
     const target3=path.join(cet,'3 Offre en attente de décision',moved.folderName);
     await fs.rename(moved.finalPath,target3);
-    await json(base+'/api/scan-status',{method:'POST'});
+    // Le contenu interne d'un AO peut être volumineux : le scanner ne doit pas le parcourir.
+    let deep=path.join(target3,'DOSSIER_INTERNE');
+    for(let i=0;i<12;i++){deep=path.join(deep,'NIVEAU_'+i);await fs.mkdir(deep,{recursive:true});}
+    const scan3=await json(base+'/api/scan-status',{method:'POST'});
+    assert.ok(Number.isFinite(scan3.durationMs));
     const after3=(await json(base+'/api/offers')).find(x=>x.uid===offer.uid);
     assert.equal(after3.status,'envoye');
     assert.equal(after3.finalPath,target3);
@@ -57,11 +61,11 @@ test('échéance=date AO, transfert dédié et dossiers 2/3/4/5', {timeout:25000
     await json(base+'/api/scan-status',{method:'POST'});
     const after4=(await json(base+'/api/offers')).find(x=>x.uid===offer.uid);
     assert.equal(after4.status,'gagne');
-    await fs.writeFile(path.join(target4,'PRIX.txt'),'13 250 €','utf8');
-    const priceScan=await json(base+'/api/scan-status',{method:'POST'});
-    assert.equal(priceScan.prices,1);
-    const repriced=(await json(base+'/api/offers')).find(x=>x.uid===offer.uid);
-    assert.equal(repriced.price,'13250');
+    // Le scan de statut ne lit plus tous les PRIX.txt du partage : cela évite
+    // un accès réseau par AO et garde le bouton Scanner rapide.
+    await fs.writeFile(path.join(target4,'PRIX.txt'),'13250','utf8');
+    const statusOnlyScan=await json(base+'/api/scan-status',{method:'POST'});
+    assert.equal(statusOnlyScan.prices,0);
     await json(base+`/api/offers/${offer.uid}`,{method:'PATCH',body:JSON.stringify({price:'14 000 €'})});
     assert.equal((await fs.readFile(path.join(target4,'PRIX.txt'),'utf8')).trim(),'14000');
     await fs.rm(target4,{recursive:true,force:true});
