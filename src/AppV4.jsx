@@ -42,11 +42,11 @@ async function api(url, options = {}) {
 const today = () => new Date().toISOString().slice(0, 10);
 const emptyOffer = () => ({
   date: today(), ca: 'XX', be: '', client: '', title: '', commercial: '', quoteNumber: '',
-  contact: '', destinationId: ''
+  contact: '', price: '', destinationId: ''
 });
 const emptyTransfer = () => ({
   sourcePath: '', offerUid: '', date: today(), ca: 'XX', be: '', client: '', title: '', commercial: '', quoteNumber: '',
-  contact: '', destinationId: ''
+  contact: '', price: '', destinationId: ''
 });
 function clean(value) { return String(value || '').trim().replace(/_/g, '-'); }
 function preview(form) {
@@ -115,6 +115,7 @@ function CreatePage({ settings, reload, toast }) {
         <Field label="N° devis Onaya · facultatif"><input value={form.quoteNumber} onChange={e=>update('quoteNumber',e.target.value.toUpperCase())} placeholder="Laisser vide"/></Field>
         <Field label="Destination de création"><select required value={form.destinationId} onChange={e=>update('destinationId',e.target.value)}><option value="">Choisir</option>{settings.destinations.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
         <Field label="Contact" wide><input value={form.contact} onChange={e=>update('contact',e.target.value)} placeholder="Nom, mail, téléphone…"/></Field>
+        <Field label="Prix · facultatif"><input value={form.price} onChange={e=>update('price',e.target.value)} placeholder="Ex. 125 000 €"/></Field>
       </div>
       <div className="folder-preview"><span>Nom généré</span><code>{preview(form)}</code></div>
       <div className="create-actions"><button className="primary-button" disabled={busy || !settings.destinations.length}><Icon name="create" size={16}/>{busy?'Création…':'Créer le dossier'}</button></div>
@@ -135,7 +136,7 @@ function TransferPage({ settings, reload, toast }) {
       const p = result.parsed || result.offer || {};
       setForm({
         sourcePath:selected, offerUid:result.offer?.uid || '', date:p.date || today(), ca:p.ca || 'XX', be:p.be || '', client:p.client || '',
-        title:p.title || '', commercial:p.commercial || '', quoteNumber:p.quoteNumber || '', contact:p.contact || '', destinationId:''
+        title:p.title || '', commercial:p.commercial || '', quoteNumber:p.quoteNumber || '', contact:p.contact || '', price:p.price || '', destinationId:''
       });
     } catch(error) { toast({type:'error',message:error.message}); }
   }
@@ -164,6 +165,7 @@ function TransferPage({ settings, reload, toast }) {
           <Field label="N° devis Onaya · facultatif"><input value={form.quoteNumber} onChange={e=>update('quoteNumber',e.target.value.toUpperCase())}/></Field>
           <Field label="Destination de transfert"><select required value={form.destinationId} onChange={e=>update('destinationId',e.target.value)}><option value="">Choisir</option>{(settings.transferDestinations||[]).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
           <Field label="Contact" wide><input value={form.contact} onChange={e=>update('contact',e.target.value)}/></Field>
+          <Field label="Prix · facultatif"><input value={form.price} onChange={e=>update('price',e.target.value)} placeholder="Ex. 125 000 €"/></Field>
         </div>
         <div className="folder-preview"><span>Nouveau nom</span><code>{preview(form)}</code></div>
         <div className="create-actions"><button className="primary-button" disabled={busy || !(settings.transferDestinations||[]).length}><Icon name="transfer" size={16}/>{busy?'Transfert…':'Renommer et transférer'}</button></div>
@@ -178,11 +180,25 @@ function FollowupModalV4({row,close,reload,toast}){
   return <div className="overlay" onMouseDown={e=>e.target===e.currentTarget&&close()}><form className="modal" onSubmit={submit}><header><div><span className="eyebrow">Relance</span><h2>{row.title}</h2></div><button type="button" className="icon-button" onClick={close}>×</button></header><Field label="Date"><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></Field><Field label="Compte rendu"><textarea rows="4" value={note} onChange={e=>setNote(e.target.value)} placeholder="Appel, mail, retour client…"/></Field><footer><button type="button" className="secondary-button" onClick={close}>Annuler</button><button className="primary-button" disabled={busy}>{busy?'Enregistrement…':'Enregistrer'}</button></footer></form></div>;
 }
 
-function TrackingRowV4({row,followup}){
+function PriceCellV4({row,reload,toast}){
+  const [value,setValue]=useState(row.price||'');const [busy,setBusy]=useState(false);
+  useEffect(()=>setValue(row.price||''),[row.uid,row.price]);
+  async function save(){
+    const next=String(value||'').trim();
+    if(next===String(row.price||'').trim())return;
+    try{setBusy(true);await api(`/api/offers/${row.uid}`,{method:'PATCH',body:JSON.stringify({price:next})});await reload();toast({message:'Prix enregistré.'});}
+    catch(error){setValue(row.price||'');toast({type:'error',message:error.message});}
+    finally{setBusy(false);}
+  }
+  return <input className="v4-price-input" value={value} disabled={busy} onChange={e=>setValue(e.target.value)} onBlur={save} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();e.currentTarget.blur();}}} placeholder="—" title="Le montant est aussi écrit dans PRIX.txt"/>;
+}
+
+function TrackingRowV4({row,followup,reload,toast}){
   return <div className="v4-track-row">
     <div className="offer-cell"><strong>{row.title}</strong><code>{row.folderName}</code></div>
     <div className="muted-cell">{row.client||row.be||'—'}<small>{row.client&&row.be?`BE : ${row.be}`:''}</small></div>
     <ContactCellV4 value={row.contact}/>
+    <PriceCellV4 row={row} reload={reload} toast={toast}/>
     <div className="destination-chip">{row.destinationName||'Création'}</div>
     <div className={`status-badge ${row.status}`}>{STATUS[row.status]||row.status}</div>
     <div className="v4-date-cell">{row.date ? new Date(`${row.date}T12:00:00`).toLocaleDateString('fr-FR') : '—'}</div>
@@ -192,10 +208,17 @@ function TrackingRowV4({row,followup}){
 
 function TrackingPage({ offers, reload, toast }) {
   const [query,setQuery]=useState('');const [status,setStatus]=useState('');const [destination,setDestination]=useState('');const [followup,setFollowup]=useState(null);
-  const rows=useMemo(()=>offers.filter(r=>{const q=query.trim().toLocaleLowerCase('fr');const okQ=!q||[r.folderName,r.title,r.client,r.be,r.ca,r.contact,r.destinationName,r.createdByName,r.lastActorName].some(v=>String(v||'').toLocaleLowerCase('fr').includes(q));return okQ&&(!status||r.status===status)&&(!destination||r.destinationName===destination);}),[offers,query,status,destination]);
+  const rows=useMemo(()=>offers.filter(r=>{const q=query.trim().toLocaleLowerCase('fr');const okQ=!q||[r.folderName,r.title,r.client,r.be,r.ca,r.contact,r.price,r.destinationName,r.createdByName,r.lastActorName].some(v=>String(v||'').toLocaleLowerCase('fr').includes(q));return okQ&&(!status||r.status===status)&&(!destination||r.destinationName===destination);}),[offers,query,status,destination]);
   const destinations=[...new Set(offers.map(x=>x.destinationName).filter(Boolean))].sort();
-  async function scan(){try{const r=await api('/api/scan-status',{method:'POST'});await reload();toast({message:r.changed?`${r.changed} changement(s) détecté(s).`:'Aucun changement détecté.'});}catch(error){toast({type:'error',message:error.message});}}
-  return <main className="content history-page v4-compact-page"><header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button type="button" className="secondary-button" onClick={scan}><Icon name="refresh" size={15}/>Scanner les emplacements</button></header><div className="v4-filters v4-filters-3"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={destination} onChange={e=>setDestination(e.target.value)}><option value="">Toutes les destinations</option>{destinations.map(d=><option key={d}>{d}</option>)}</select></div><section className="v4-table-card"><div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Contact</span><span>Destination</span><span>Statut</span><span>Échéance</span><span>Suivi</span></div>{!rows.length?<div className="empty-state"><strong>Aucun AO</strong></div>:rows.map(row=><TrackingRowV4 key={row.uid} row={row} followup={()=>setFollowup(row)}/>)}</section>{followup&&<FollowupModalV4 row={followup} close={()=>setFollowup(null)} reload={reload} toast={toast}/>}</main>;
+  async function scan(){
+    try{
+      const r=await api('/api/scan-status',{method:'POST'});await reload();
+      if(r.missing)toast({message:`${r.missing} dossier(s) introuvable(s) détecté(s).`});
+      else if(r.changed)toast({message:`${r.changed} changement(s) détecté(s)${r.prices?` · ${r.prices} prix mis à jour`:''}.`});
+      else toast({message:'Aucun changement détecté.'});
+    }catch(error){toast({type:'error',message:error.message});}
+  }
+  return <main className="content history-page v4-compact-page"><header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button type="button" className="secondary-button" onClick={scan}><Icon name="refresh" size={15}/>Scanner les emplacements</button></header><div className="v4-filters v4-filters-3"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={destination} onChange={e=>setDestination(e.target.value)}><option value="">Toutes les destinations</option>{destinations.map(d=><option key={d}>{d}</option>)}</select></div><section className="v4-table-card"><div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Contact</span><span>Prix</span><span>Destination</span><span>Statut</span><span>Échéance</span><span>Suivi</span></div>{!rows.length?<div className="empty-state"><strong>Aucun AO</strong></div>:rows.map(row=><TrackingRowV4 key={row.uid} row={row} reload={reload} toast={toast} followup={()=>setFollowup(row)}/>)}</section>{followup&&<FollowupModalV4 row={followup} close={()=>setFollowup(null)} reload={reload} toast={toast}/>}</main>;
 }
 
 function LogsPage({ toast }) {
@@ -246,7 +269,7 @@ function TreeEditorV4({initialTree,reload,toast}){
   const [tree,setTree]=useState(initialTree||[]);const [busy,setBusy]=useState(false);useEffect(()=>setTree(initialTree||[]),[initialTree]);
   const rename=(id,name)=>setTree(v=>mapTreeV4(v,id,n=>({...n,name})));const add=id=>setTree(v=>mapTreeV4(v,id,n=>({...n,children:[...(n.children||[]),newTreeNodeV4()]})));const remove=id=>setTree(v=>removeTreeV4(v,id));
   async function save(){try{setBusy(true);await api('/api/tree',{method:'PUT',body:JSON.stringify({tree})});await reload();toast({message:'Arborescence enregistrée.'});}catch(error){toast({type:'error',message:error.message});}finally{setBusy(false);}}
-  return <section className="settings-panel tree-panel"><header className="panel-title tree-title"><div><span className="eyebrow">Structure</span><h2>Arborescence des nouveaux AO</h2></div><button className="secondary-button" onClick={save} disabled={busy}>{busy?'Enregistrement…':'Enregistrer'}</button></header><p className="tree-help">Cette fonction v0.3 est conservée : les sous-dossiers configurés sont créés avec chaque nouvel AO.</p><div className="tree-root">{tree.map(node=><TreeNodeV4 key={node.id} node={node} rename={rename} add={add} remove={remove}/>)}<button className="tree-add root-add" onClick={()=>setTree(v=>[...v,newTreeNodeV4()])}><Icon name="plus" size={14}/>Dossier racine</button></div></section>;
+  return <section className="settings-panel tree-panel"><header className="panel-title tree-title"><div><span className="eyebrow">Structure</span><h2>Arborescence des nouveaux AO</h2></div><button className="secondary-button" onClick={save} disabled={busy}>{busy?'Enregistrement…':'Enregistrer'}</button></header><div className="tree-root">{tree.map(node=><TreeNodeV4 key={node.id} node={node} rename={rename} add={add} remove={remove}/>)}<button className="tree-add root-add" onClick={()=>setTree(v=>[...v,newTreeNodeV4()])}><Icon name="plus" size={14}/>Dossier racine</button></div></section>;
 }
 
 function buildTemplateV4(settings){return {app:'createur-ao',schemaVersion:3,exportedAt:new Date().toISOString(),destinations:(settings.destinations||[]).map(({name,path})=>({name,path})),transferDestinations:(settings.transferDestinations||[]).map(({name,path})=>({name,path})),tree:settings.tree||[]};}

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.4.1-beta.3
+
+- les sélecteurs de dossiers s’ouvrent par défaut sur `\\sie15\Travaux\2 APPELS D OFFRES` lorsqu’aucun chemin courant n’est renseigné ;
+- ajout du prix dans le suivi, modifiable directement depuis la colonne Prix ;
+- création automatique de `PRIX.txt` dans chaque nouvel AO, vide ou prérempli selon le montant saisi ;
+- lecture de `PRIX.txt` lors d’un transfert et lors du scan des emplacements ; une modification manuelle du fichier remonte dans le suivi ;
+- modification du prix depuis le suivi réécrit également `PRIX.txt` ;
+- détection `Introuvable` renforcée en contrôlant aussi le dossier parent de l’ancien emplacement, afin de distinguer un AO supprimé d’un partage réseau indisponible ;
+- correction de l’alignement du bouton Ajouter dans les destinations ;
+- suppression du texte de compatibilité v0.3 dans l’arborescence.
+
 ## v0.4.1-beta.2
 
 - interface réagrandie après le premier compactage, tout en restant visible sans défilement sur la page de création ;

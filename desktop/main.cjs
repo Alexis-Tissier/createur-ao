@@ -8,6 +8,7 @@ const { promisify } = require('node:util');
 const execFileAsync = promisify(execFile);
 const APP_ID = 'fr.alexis-tissier.createur-ao';
 const PROD_PORT = 4178;
+const DEFAULT_BROWSE_PATH = '\\sie15\Travaux\2 APPELS D OFFRES';
 let mainWindow = null;
 let backendProcess = null;
 
@@ -159,7 +160,8 @@ function createWindow() {
 }
 
 ipcMain.handle('dialog:choose-folder', async (_event, initialPath = '') => {
-  const safeInitialPath = typeof initialPath === 'string' && initialPath.trim() ? initialPath.trim() : undefined;
+  const requestedPath = typeof initialPath === 'string' && initialPath.trim() ? initialPath.trim() : '';
+  const safeInitialPath = requestedPath || (fs.existsSync(DEFAULT_BROWSE_PATH) ? DEFAULT_BROWSE_PATH : undefined);
   const options = {
     title: 'Choisir le dossier de destination',
     buttonLabel: 'Sélectionner',

@@ -66,6 +66,7 @@ db.exec(`
     commercial TEXT NOT NULL DEFAULT '',
     quote_number TEXT NOT NULL DEFAULT '',
     contact TEXT NOT NULL DEFAULT '',
+    price TEXT NOT NULL DEFAULT '',
     destination_id INTEGER,
     destination_name TEXT NOT NULL DEFAULT '',
     base_path TEXT NOT NULL DEFAULT '',
@@ -130,6 +131,7 @@ db.exec(`
 for (const [column, sql] of [
   ['uid', "ALTER TABLE offers ADD COLUMN uid TEXT"],
   ['client', "ALTER TABLE offers ADD COLUMN client TEXT NOT NULL DEFAULT ''"],
+  ['price', "ALTER TABLE offers ADD COLUMN price TEXT NOT NULL DEFAULT ''"],
   ['department', "ALTER TABLE offers ADD COLUMN department TEXT NOT NULL DEFAULT ''"],
   ['status', "ALTER TABLE offers ADD COLUMN status TEXT NOT NULL DEFAULT 'a_attribuer'"],
   ['due_date', "ALTER TABLE offers ADD COLUMN due_date TEXT NOT NULL DEFAULT ''"],
@@ -209,6 +211,15 @@ function cleanDestinationPath(value) {
   if (!result) throw new Error('Chemin de destination obligatoire.');
   return result;
 }
+function normalizePrice(value) { return String(value ?? '').trim(); }
+async function readOptionalTextFile(file) {
+  try { return { exists:true, value:(await fsp.readFile(file, 'utf8')).trim() }; }
+  catch (error) { if (error?.code === 'ENOENT') return { exists:false, value:'' }; throw error; }
+}
+async function readPriceFile(rootPath) { return readOptionalTextFile(path.join(rootPath, 'PRIX.txt')); }
+async function writePriceFile(rootPath, value) { await fsp.writeFile(path.join(rootPath, 'PRIX.txt'), normalizePrice(value), 'utf8'); }
+async function readContactFile(rootPath) { return readOptionalTextFile(path.join(rootPath, 'CONTACTS.txt')); }
+
 function normalizeStatus(value) {
   const status = String(value || 'a_attribuer');
   return STATUS_VALUES.has(status) ? status : 'a_attribuer';
@@ -291,6 +302,7 @@ function offerPublic(row) {
     commercial: row.commercial,
     quoteNumber: row.quote_number,
     contact: row.contact,
+    price: row.price || '',
     destinationId: row.destination_id,
     destinationName: row.destination_name,
     basePath: row.base_path,
@@ -362,7 +374,7 @@ function upsertOfferSnapshot(snapshot, actorPc = '') {
   const params = {
     uid: snapshot.uid,
     folderName: snapshot.folderName || '', date: snapshot.date || '', ca: snapshot.ca || 'XX', be: snapshot.be || '', client: snapshot.client || '',
-    title: snapshot.title || '', commercial: snapshot.commercial || '', quoteNumber: snapshot.quoteNumber || '', contact: snapshot.contact || '',
+    title: snapshot.title || '', commercial: snapshot.commercial || '', quoteNumber: snapshot.quoteNumber || '', contact: snapshot.contact || '', price: snapshot.price || '',
     destinationId: snapshot.destinationId || null, destinationName: snapshot.destinationName || '', basePath: snapshot.basePath || '', finalPath: snapshot.finalPath || '',
     department: '', status: normalizeStatus(snapshot.status), dueDate: snapshot.date || snapshot.dueDate || '', remark: snapshot.remark || '',
     createdByPc: snapshot.createdByPc || actorPc || '', lastActorPc: actorPc || snapshot.lastActorPc || '',
@@ -371,13 +383,13 @@ function upsertOfferSnapshot(snapshot, actorPc = '') {
   };
   if (existing) {
     db.prepare(`UPDATE offers SET folder_name=@folderName,date_ao=@date,ca=@ca,be=@be,client=@client,title=@title,commercial=@commercial,
-      quote_number=@quoteNumber,contact=@contact,destination_id=@destinationId,destination_name=@destinationName,base_path=@basePath,final_path=@finalPath,
+      quote_number=@quoteNumber,contact=@contact,price=@price,destination_id=@destinationId,destination_name=@destinationName,base_path=@basePath,final_path=@finalPath,
       department=@department,status=@status,due_date=@dueDate,remark=@remark,created_by_pc=@createdByPc,last_actor_pc=@lastActorPc,
       last_followup_at=@lastFollowupAt,followup_count=@followupCount,updated_at=@updatedAt WHERE uid=@uid`).run(params);
   } else {
-    db.prepare(`INSERT INTO offers (uid,folder_name,date_ao,ca,be,client,title,commercial,quote_number,contact,destination_id,destination_name,base_path,final_path,
+    db.prepare(`INSERT INTO offers (uid,folder_name,date_ao,ca,be,client,title,commercial,quote_number,contact,price,destination_id,destination_name,base_path,final_path,
       department,status,due_date,remark,created_by_pc,last_actor_pc,last_followup_at,followup_count,created_at,updated_at)
-      VALUES (@uid,@folderName,@date,@ca,@be,@client,@title,@commercial,@quoteNumber,@contact,@destinationId,@destinationName,@basePath,@finalPath,
+      VALUES (@uid,@folderName,@date,@ca,@be,@client,@title,@commercial,@quoteNumber,@contact,@price,@destinationId,@destinationName,@basePath,@finalPath,
       @department,@status,@dueDate,@remark,@createdByPc,@lastActorPc,@lastFollowupAt,@followupCount,@createdAt,@updatedAt)`).run(params);
   }
   return true;
@@ -577,8 +589,9 @@ async function markMissingOffers() {
       }
       continue;
     }
+    const parentStat = await fsp.stat(path.dirname(row.final_path)).catch(() => null);
     const baseStat = row.base_path ? await fsp.stat(row.base_path).catch(() => null) : null;
-    if (!baseStat?.isDirectory()) continue; // chemin réseau indisponible : ne pas conclure à une suppression
+    if (!parentStat?.isDirectory() && !baseStat?.isDirectory()) continue; // partage indisponible : ne pas conclure à une suppression
     if (row.status === 'introuvable') continue;
     db.prepare("UPDATE offers SET status='introuvable',last_actor_pc=?,updated_at=? WHERE uid=?").run('SYSTEM', nowIso(), row.uid);
     const fresh = offerByUid(row.uid);
@@ -587,8 +600,29 @@ async function markMissingOffers() {
   }
   return changed;
 }
+async function syncPricesFromDisk() {
+  let changed=0;
+  const rows=db.prepare('SELECT uid,price,final_path,status FROM offers').all();
+  for(const row of rows){
+    if(!row.final_path)continue;
+    const stat=await fsp.stat(row.final_path).catch(()=>null);
+    if(!stat?.isDirectory())continue;
+    const disk=await readPriceFile(row.final_path);
+    if(!disk.exists){
+      if(String(row.price||'').trim()) await writePriceFile(row.final_path,row.price).catch(()=>{});
+      continue;
+    }
+    if(disk.value===String(row.price||'').trim())continue;
+    const at=nowIso();
+    db.prepare('UPDATE offers SET price=?,last_actor_pc=?,updated_at=? WHERE uid=?').run(disk.value,'SYSTEM',at,row.uid);
+    const fresh=offerByUid(row.uid);
+    queueEvent({type:'offer.snapshot',offerUid:row.uid,payload:{offer:serializeOffer(fresh)},action:'Prix détecté dans PRIX.txt',details:disk.value||'vide',status:fresh.status});
+    changed+=1;
+  }
+  return changed;
+}
 async function scanStatuses() {
-  if (scanBusy) return { changed: 0 };
+  if (scanBusy) return { changed: 0, missing: 0, prices: 0 };
   scanBusy = true;
   try {
     let changed = 0;
@@ -600,8 +634,10 @@ async function scanStatuses() {
         if (stageRoot) changed += await scanStageDirectory(stageRoot, status, destination);
       }
     }
-    changed += await markMissingOffers();
-    return { changed };
+    const missing = await markMissingOffers();
+    const prices = await syncPricesFromDisk();
+    changed += missing + prices;
+    return { changed, missing, prices };
   } finally { scanBusy = false; }
 }
 
@@ -773,15 +809,16 @@ app.post('/api/offers', async (req, res) => {
     const payload = {
       date:String(req.body?.date || ''), ca:sanitizeSegment(req.body?.ca,{upper:true}), be:sanitizeSegment(req.body?.be,{upper:true}),
       client:sanitizeSegment(req.body?.client,{upper:true}), title:sanitizeSegment(req.body?.title), commercial:sanitizeSegment(req.body?.commercial,{upper:true}),
-      quoteNumber:sanitizeSegment(req.body?.quoteNumber,{upper:true}), contact:String(req.body?.contact ?? '')
+      quoteNumber:sanitizeSegment(req.body?.quoteNumber,{upper:true}), contact:String(req.body?.contact ?? ''), price:normalizePrice(req.body?.price)
     };
     const folderName = buildFolderName(payload);
     const tree = readTree(); assertNoDuplicateSiblings(tree);
     finalPath = await createFolderTree({ fs:fsp, basePath:destination.path, folderName, tree });
     await writeContactsFile({ fs:fsp, rootPath:finalPath, contact:payload.contact });
+    await writePriceFile(finalPath, payload.price);
     const uid = crypto.randomUUID(); const at = nowIso();
-    db.prepare(`INSERT INTO offers (uid,folder_name,date_ao,ca,be,client,title,commercial,quote_number,contact,destination_id,destination_name,base_path,final_path,department,status,due_date,created_by_pc,last_actor_pc,created_at,updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid,folderName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,destination.id,destination.name,destination.path,finalPath,'','a_attribuer',payload.date,PEER_ID,PEER_ID,at,at);
+    db.prepare(`INSERT INTO offers (uid,folder_name,date_ao,ca,be,client,title,commercial,quote_number,contact,price,destination_id,destination_name,base_path,final_path,department,status,due_date,created_by_pc,last_actor_pc,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid,folderName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,payload.price,destination.id,destination.name,destination.path,finalPath,'','a_attribuer',payload.date,PEER_ID,PEER_ID,at,at);
     const fresh = offerByUid(uid);
     queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'AO créé', details:folderName, status:fresh.status });
     await syncMaster();
@@ -793,15 +830,24 @@ app.post('/api/offers', async (req, res) => {
   }
 });
 
-app.patch('/api/offers/:uid', (req, res) => {
+app.patch('/api/offers/:uid', async (req, res) => {
   try {
     const uid = String(req.params.uid);
     const current = offerByUid(uid); if (!current) return res.status(404).json({error:'Appel d’offres introuvable.'});
     const remark = req.body?.remark === undefined ? current.remark : String(req.body.remark || '').trim();
+    const price = req.body?.price === undefined ? String(current.price || '') : normalizePrice(req.body.price);
+    const priceChanged = price !== String(current.price || '');
+    if (priceChanged && current.final_path) {
+      const stat = await fsp.stat(current.final_path).catch(() => null);
+      if (stat?.isDirectory()) await writePriceFile(current.final_path, price);
+    }
     const at = nowIso();
-    db.prepare("UPDATE offers SET due_date=date_ao,department='',remark=?,last_actor_pc=?,updated_at=? WHERE uid=?").run(remark,PEER_ID,at,uid);
+    db.prepare("UPDATE offers SET due_date=date_ao,department='',remark=?,price=?,last_actor_pc=?,updated_at=? WHERE uid=?").run(remark,price,PEER_ID,at,uid);
     const fresh = offerByUid(uid);
-    queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'Suivi AO modifié', details:remark !== current.remark ? 'remarque modifiée' : '', status:fresh.status });
+    const changes=[];
+    if(remark!==current.remark)changes.push('remarque modifiée');
+    if(priceChanged)changes.push(`prix : ${price || 'vide'}`);
+    queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'Suivi AO modifié', details:changes.join(' · '), status:fresh.status });
     res.json(offerPublic(fresh));
   } catch (error) { res.status(400).json({error:String(error?.message || error)}); }
 });
@@ -825,17 +871,27 @@ app.post('/api/offers/:uid/followups', (req, res) => {
   res.status(201).json({ok:true});
 });
 
-app.post('/api/transfer/inspect', (req, res) => {
-  const selectedPath = String(req.body?.path || '').trim();
-  if (!selectedPath) return res.status(400).json({error:'Sélectionnez un dossier.'});
-  const exact = db.prepare('SELECT * FROM offers WHERE lower(final_path)=lower(?)').get(selectedPath);
-  if (exact) return res.json({ tracked:true, offer:offerPublic(exact), parsed:offerPublic(exact) });
-  const name = path.basename(selectedPath);
-  const byName = db.prepare('SELECT * FROM offers WHERE lower(folder_name)=lower(?) ORDER BY updated_at DESC LIMIT 1').get(name);
-  if (byName) return res.json({ tracked:true, offer:offerPublic(byName), parsed:offerPublic(byName) });
-  const parsed = parseFolderName(name);
-  if (!parsed) return res.status(400).json({error:'Le nom du dossier ne correspond pas à un AO reconnu.'});
-  res.json({ tracked:false, offer:null, parsed:{...parsed, folderName:name, finalPath:selectedPath, contact:'', dueDate:parsed.date || ''} });
+app.post('/api/transfer/inspect', async (req, res) => {
+  try {
+    const selectedPath = String(req.body?.path || '').trim();
+    if (!selectedPath) return res.status(400).json({error:'Sélectionnez un dossier.'});
+    const diskPrice = await readPriceFile(selectedPath);
+    const diskContact = await readContactFile(selectedPath);
+    const exact = db.prepare('SELECT * FROM offers WHERE lower(final_path)=lower(?)').get(selectedPath);
+    if (exact) {
+      const value=offerPublic(exact); if(diskPrice.exists)value.price=diskPrice.value; if(diskContact.exists&&diskContact.value)value.contact=diskContact.value;
+      return res.json({ tracked:true, offer:value, parsed:value });
+    }
+    const name = path.basename(selectedPath);
+    const byName = db.prepare('SELECT * FROM offers WHERE lower(folder_name)=lower(?) ORDER BY updated_at DESC LIMIT 1').get(name);
+    if (byName) {
+      const value=offerPublic(byName); if(diskPrice.exists)value.price=diskPrice.value; if(diskContact.exists&&diskContact.value)value.contact=diskContact.value;
+      return res.json({ tracked:true, offer:value, parsed:value });
+    }
+    const parsed = parseFolderName(name);
+    if (!parsed) return res.status(400).json({error:'Le nom du dossier ne correspond pas à un AO reconnu.'});
+    res.json({ tracked:false, offer:null, parsed:{...parsed, folderName:name, finalPath:selectedPath, contact:diskContact.value || '', price:diskPrice.value || '', dueDate:parsed.date || ''} });
+  } catch(error) { res.status(400).json({error:String(error?.message || error)}); }
 });
 
 app.post('/api/transfer/execute', async (req, res) => {
@@ -851,7 +907,7 @@ app.post('/api/transfer/execute', async (req, res) => {
     const payload = {
       date:String(req.body?.date || ''), ca:sanitizeSegment(req.body?.ca,{upper:true}), be:sanitizeSegment(req.body?.be,{upper:true}), client:sanitizeSegment(req.body?.client,{upper:true}),
       title:sanitizeSegment(req.body?.title), commercial:sanitizeSegment(req.body?.commercial,{upper:true}), quoteNumber:sanitizeSegment(req.body?.quoteNumber,{upper:true}),
-      contact:String(req.body?.contact ?? '')
+      contact:String(req.body?.contact ?? ''), price:normalizePrice(req.body?.price)
     };
     const newName = buildFolderName(payload);
     const targetPath = path.join(stageTwo, newName);
@@ -861,13 +917,14 @@ app.post('/api/transfer/execute', async (req, res) => {
     if (!uid) uid = crypto.randomUUID();
     releaseLock = await acquireOfferLock(uid);
     await moveDirectory(sourcePath, targetPath);
+    await writePriceFile(targetPath, payload.price);
     const at = nowIso();
     if (existing) {
-      db.prepare(`UPDATE offers SET folder_name=?,date_ao=?,ca=?,be=?,client=?,title=?,commercial=?,quote_number=?,contact=?,destination_id=NULL,destination_name=?,base_path=?,final_path=?,department='',status='en_cours',due_date=?,last_actor_pc=?,updated_at=? WHERE uid=?`)
-        .run(newName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,destination.name,destination.path,targetPath,payload.date,PEER_ID,at,uid);
+      db.prepare(`UPDATE offers SET folder_name=?,date_ao=?,ca=?,be=?,client=?,title=?,commercial=?,quote_number=?,contact=?,price=?,destination_id=NULL,destination_name=?,base_path=?,final_path=?,department='',status='en_cours',due_date=?,last_actor_pc=?,updated_at=? WHERE uid=?`)
+        .run(newName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,payload.price,destination.name,destination.path,targetPath,payload.date,PEER_ID,at,uid);
     } else {
-      db.prepare(`INSERT INTO offers (uid,folder_name,date_ao,ca,be,client,title,commercial,quote_number,contact,destination_id,destination_name,base_path,final_path,department,status,due_date,created_by_pc,last_actor_pc,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid,newName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,null,destination.name,destination.path,targetPath,'','en_cours',payload.date,PEER_ID,PEER_ID,at,at);
+      db.prepare(`INSERT INTO offers (uid,folder_name,date_ao,ca,be,client,title,commercial,quote_number,contact,price,destination_id,destination_name,base_path,final_path,department,status,due_date,created_by_pc,last_actor_pc,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(uid,newName,payload.date,payload.ca,payload.be,payload.client,payload.title,payload.commercial,payload.quoteNumber,payload.contact,payload.price,null,destination.name,destination.path,targetPath,'','en_cours',payload.date,PEER_ID,PEER_ID,at,at);
     }
     const fresh = offerByUid(uid);
     queueEvent({ type:'offer.snapshot', offerUid:uid, payload:{offer:serializeOffer(fresh)}, action:'AO transféré', details:`${sourcePath} → ${targetPath}`, status:fresh.status });
