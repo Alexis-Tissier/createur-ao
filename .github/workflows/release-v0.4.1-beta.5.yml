@@ -1,0 +1,53 @@
+name: Release v0.4.1-beta.5
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'package.json'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify version
+        shell: bash
+        run: node -e "const p=require('./package.json'); if(p.version!=='0.4.1-beta.5') process.exit(1)"
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate
+        run: npm run check
+      - name: Build NSIS setup
+        run: npm run prepare:icon && npm run build && npx electron-builder --win nsis --x64 --publish never
+      - uses: actions/upload-artifact@v4
+        with:
+          name: createur-ao-v0.4.1-beta.5
+          path: release/Createur-AO-Setup.exe
+
+  publish:
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: createur-ao-v0.4.1-beta.5
+          path: release
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v0.4.1-beta.5 release/Createur-AO-Setup.exe \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "Créateur d'AO v0.4.1 beta 5" \
+            --notes "Beta de test : scan des statuts fortement accéléré en ne lisant que les dossiers AO directement présents dans 2/3/4/5, scan manuel sans timeout artificiel, affichage des prix en format français 120 000€ avec PRIX.txt numérique brut, et Suivi AO qui conserve le créateur d'origine au lieu du dernier poste ayant modifié ou scanné l'AO."
