@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -38,4 +40,5 @@ jobs:
             exit 0
           fi
           git commit -m "fix: make embedded app icon reliable"
-          git push
+          git pull --rebase origin main
+          git push origin HEAD:main
