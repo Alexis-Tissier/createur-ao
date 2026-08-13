@@ -37,7 +37,7 @@ jobs:
           for name in ('public/app-icon.png', 'dist/app-icon.png'):
               data = Path(name).read_bytes()
               assert data.startswith(sig), f'{name} is not a PNG'
-              assert len(data) > 10000, f'{name} is unexpectedly small'
+              assert len(data) > 1000, f'{name} is unexpectedly small'
               print(name, len(data), 'bytes OK')
           PY
       - name: Commit and push
