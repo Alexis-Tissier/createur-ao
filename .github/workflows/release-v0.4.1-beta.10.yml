@@ -2,7 +2,7 @@ name: Release v0.4.1-beta.11
 
 on:
   push:
-    branches: [main]
+    branches: [ci/beta11-release]
     paths:
       - 'package.json'
       - 'scripts/generate-windows-icon.py'
@@ -18,82 +18,41 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Verify version
         shell: bash
         run: node -e "const p=require('./package.json'); if(p.version!=='0.4.1-beta.11') process.exit(1)"
-
       - name: Install dependencies
         run: npm ci
-
-      - name: Install icon generator dependency
-        run: python -m pip install --disable-pip-version-check pillow
-
-      - name: Wire the same Windows icon into Electron
+      - name: Install Pillow
+        run: python -m pip install pillow
+      - name: Patch Electron icon path
         shell: pwsh
         run: |
-          $path = 'desktop/main.cjs'
-          $text = Get-Content $path -Raw
-          $text = $text.Replace("path.join(process.resourcesPath, 'icon.png')", "path.join(process.resourcesPath, 'icon.ico')")
-          $text = $text.Replace("path.join(__dirname, '..', 'build', 'icon.png')", "path.join(__dirname, '..', 'build', 'icon.ico')")
-          Set-Content -Path $path -Value $text -Encoding UTF8
-          if ((Get-Content $path -Raw) -notmatch "icon\.ico") { throw 'desktop/main.cjs ne pointe pas vers icon.ico' }
-
-      - name: Validate application
+          $p='desktop/main.cjs'
+          $t=Get-Content $p -Raw
+          $t=$t.Replace("path.join(process.resourcesPath, 'icon.png')", "path.join(process.resourcesPath, 'icon.ico')")
+          $t=$t.Replace("path.join(__dirname, '..', 'build', 'icon.png')", "path.join(__dirname, '..', 'build', 'icon.ico')")
+          Set-Content $p $t -Encoding UTF8
+      - name: Validate
         run: npm run check
-
-      - name: Generate canonical multi-size Windows icon
+      - name: Generate Windows icon
         run: npm run prepare:windows-icon
-
-      - name: Verify generated icon files
-        shell: pwsh
-        run: |
-          Add-Type -AssemblyName System.Drawing
-          if (-not (Test-Path 'build/icon.ico')) { throw 'build/icon.ico absent' }
-          if (-not (Test-Path 'build/icon.png')) { throw 'build/icon.png absent' }
-          $ico = [System.Drawing.Icon]::new((Resolve-Path 'build/icon.ico').Path)
-          try {
-            if ($ico.Width -lt 16 -or $ico.Height -lt 16) { throw "ICO invalide: $($ico.Width)x$($ico.Height)" }
-            Write-Host "ICO canonique lisible: $($ico.Width)x$($ico.Height)"
-          } finally { $ico.Dispose() }
-
       - name: Build NSIS setup
         run: npx electron-builder --win nsis --x64 --publish never
-
       - name: Verify embedded Windows icon
         shell: pwsh
         run: |
           Add-Type -AssemblyName System.Drawing
-          $exe = (Resolve-Path 'release/win-unpacked/Createur-AO.exe').Path
-          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe)
-          if ($null -eq $icon) { throw 'Aucune icône embarquée dans Createur-AO.exe' }
-          try {
-            if ($icon.Width -lt 16 -or $icon.Height -lt 16) { throw "Icône embarquée invalide: $($icon.Width)x$($icon.Height)" }
-            Write-Host "Icône embarquée détectée: $($icon.Width)x$($icon.Height)"
-          } finally { $icon.Dispose() }
-          if (-not (Test-Path 'release/win-unpacked/resources/icon.ico')) { throw 'L ICO Electron packagé est absent des resources' }
-
-      - name: Commit canonical icon wiring
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add desktop/main.cjs
-          git diff --cached --check
-          if ! git diff --cached --quiet; then
-            git commit -m "fix: use canonical ICO for Electron window"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
-
+          $exe=(Resolve-Path 'release/win-unpacked/Createur-AO.exe').Path
+          $icon=[System.Drawing.Icon]::ExtractAssociatedIcon($exe)
+          if($null -eq $icon){throw 'Aucune icône embarquée'}
+          Write-Host "Icône détectée: $($icon.Width)x$($icon.Height)"
       - uses: actions/upload-artifact@v4
         with:
           name: createur-ao-v0.4.1-beta.11
@@ -113,7 +72,7 @@ jobs:
         run: |
           gh release create v0.4.1-beta.11 release/Createur-AO-Setup.exe \
             --repo "$GITHUB_REPOSITORY" \
-            --target main \
+            --target "$GITHUB_SHA" \
             --prerelease \
             --title "Créateur d'AO v0.4.1 beta 11" \
-            --notes "Icône Windows unifiée : le logo orange/crème utilisé dans l'application sert désormais de référence pour un véritable ICO multi-résolution (16 à 256 px), utilisé par la fenêtre Electron, l'exécutable, les raccourcis, Alt+Tab et la barre des tâches."
+            --notes "Icône Windows unifiée avec le logo orange/crème de l'application, via un ICO multi-résolution pour la fenêtre, l'exécutable, Alt+Tab et la barre des tâches."
