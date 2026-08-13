@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/hotfix_v041_beta10_windows_icon.py'
+      - '.github/workflows/hotfix-v041-beta10-windows-icon.yml'
   workflow_dispatch:
 
 permissions:
