@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'package.json'
+      - 'release-beta9-inline.trigger'
   workflow_dispatch:
 
 permissions:
