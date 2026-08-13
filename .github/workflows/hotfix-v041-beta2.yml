@@ -35,5 +35,6 @@ jobs:
             echo "No changes"
           else
             git commit -m "feat: improve AO tracking safety and readability"
-            git push
+            git pull --rebase origin main
+            git push origin main
           fi
