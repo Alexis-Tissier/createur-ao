@@ -33,8 +33,8 @@ if (!gotLock) {
 
 function appIconPath() {
   return app.isPackaged
-    ? path.join(process.resourcesPath, 'icon.ico')
-    : path.join(__dirname, '..', 'build', 'icon.ico');
+    ? path.join(process.resourcesPath, 'icon.png')
+    : path.join(__dirname, '..', 'build', 'icon.png');
 }
 
 async function resolveMappedDriveToUnc(selectedPath) {

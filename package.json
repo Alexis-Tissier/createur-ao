@@ -1,6 +1,6 @@
 {
   "name": "createur-ao",
-  "version": "0.4.1-beta.9",
+  "version": "0.4.1-beta.10",
   "private": true,
   "type": "module",
   "description": "Création, transfert et suivi partagé multi-postes des appels d'offres.",
@@ -52,12 +52,12 @@
     ],
     "extraResources": [
       {
-        "from": "build/icon.ico",
-        "to": "icon.ico"
+        "from": "build/icon.png",
+        "to": "icon.png"
       }
     ],
     "win": {
-      "icon": "build/icon.ico",
+      "icon": "build/icon.png",
       "executableName": "Createur-AO",
       "target": [
         {
