@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import appIconBase64 from './assets/app-icon.b64?raw';
 
-const APP_ICON_DATA_URL = `data:image/png;base64,${appIconBase64.trim()}`;
+const APP_ICON_DATA_URL = `data:image/png;base64,${appIconBase64.replace(/\s+/g,'')}`;
 
 const STATUS = {
   a_attribuer: 'À attribuer',
