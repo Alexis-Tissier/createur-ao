@@ -1,4 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import appIconBase64 from './assets/app-icon.b64?raw';
+
+const APP_ICON_DATA_URL = `data:image/png;base64,${appIconBase64.trim()}`;
 
 const STATUS = {
   a_attribuer: 'À attribuer',
@@ -95,7 +98,7 @@ function Sidebar({ active, setActive }) {
     ['history','history','Historique']
   ];
   return <aside className="sidebar">
-    <button className="brand" onClick={() => setActive('create')}><span className="brand-mark">C</span><span className="brand-name">Créateur d’AO</span></button>
+    <button className="brand" onClick={() => setActive('create')}><span className="brand-mark"><img src={APP_ICON_DATA_URL} alt=""/></span><span className="brand-name">Créateur d’AO</span></button>
     <nav>{items.map(([key,icon,label]) => <button key={key} className={active === key ? 'active' : ''} onClick={() => setActive(key)}><Icon name={icon}/><span>{label}</span></button>)}</nav>
     <button className={`settings-link ${active === 'settings' ? 'active' : ''}`} onClick={() => setActive('settings')}><Icon name="settings"/><span>Réglages</span></button>
   </aside>;
