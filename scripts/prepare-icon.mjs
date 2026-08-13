@@ -42,3 +42,4 @@ await fs.writeFile(publicPngPath, png);
 await fs.writeFile(icoPath, makeIco(png));
 console.log(`Logo web généré : ${publicPngPath}`);
 console.log(`Logo Windows généré : ${icoPath}`);
+// Le build Vite copie ensuite public/app-icon.png vers dist/app-icon.png.
