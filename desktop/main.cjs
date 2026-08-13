@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
@@ -111,6 +111,24 @@ function stopBackend() {
   backendProcess = null;
 }
 
+async function stopBackendAndWait() {
+  const child = backendProcess;
+  if (!child) return;
+  if (child.exitCode !== null) { backendProcess = null; return; }
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = () => { if (!settled) { settled = true; resolve(); } };
+    child.once('exit', finish);
+    child.kill();
+    setTimeout(() => {
+      if (settled) return;
+      if (child.exitCode === null) { reject(new Error('Le service interne ne s’est pas arrêté correctement.')); return; }
+      finish();
+    }, 3500);
+  });
+  backendProcess = null;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     title: 'Créateur d’AO',
@@ -131,6 +149,10 @@ function createWindow() {
   });
 
   const targetUrl = process.env.AO_DEV_URL || `http://127.0.0.1:${PROD_PORT}`;
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^(https?:|mailto:)/i.test(url)) void shell.openExternal(url);
+    return { action: 'deny' };
+  });
   mainWindow.loadURL(targetUrl);
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => { mainWindow = null; });
@@ -178,6 +200,62 @@ ipcMain.handle('dialog:save-config-file', async (_event, content = '') => {
 
   await fsp.writeFile(result.filePath, String(content || ''), 'utf8');
   return result.filePath;
+});
+
+
+ipcMain.handle('backup:restore', async (_event, requestedPath = '') => {
+  if (!app.isPackaged) throw new Error('La restauration complète est disponible dans l’application Windows installée.');
+  const dataDir = app.getPath('userData');
+  const backupRoot = path.resolve(path.join(dataDir, 'backups'));
+  const source = path.resolve(String(requestedPath || ''));
+  if (path.dirname(source) !== backupRoot || !path.basename(source).startsWith('backup-')) throw new Error('Sauvegarde invalide.');
+  const sourceDb = path.join(source, 'createur-ao.db');
+  const sourceMeta = path.join(source, 'meta.json');
+  if (!fs.existsSync(sourceDb) || !fs.existsSync(sourceMeta)) throw new Error('Sauvegarde incomplète.');
+  const fd = await fsp.open(sourceDb, 'r');
+  try {
+    const header = Buffer.alloc(16);
+    await fd.read(header, 0, 16, 0);
+    if (header.toString('utf8') !== 'SQLite format 3\u0000') throw new Error('Le fichier de sauvegarde SQLite est invalide.');
+  } finally { await fd.close(); }
+  const meta = JSON.parse(await fsp.readFile(sourceMeta, 'utf8'));
+  const dbFile = path.join(dataDir, 'createur-ao.db');
+  const safetyName = `backup-pre-restore-${new Date().toISOString().replace(/[:.]/g,'-')}`;
+  const safety = path.join(backupRoot, safetyName);
+  let currentMaster = '';
+  const sourceMaster = path.join(source, 'master');
+  if (meta?.masterBasePath) currentMaster = String(meta.masterBasePath);
+  await fsp.mkdir(safety, { recursive: true });
+  await stopBackendAndWait();
+  try {
+    if (fs.existsSync(dbFile)) await fsp.copyFile(dbFile, path.join(safety, 'createur-ao.db'));
+    if (currentMaster && fs.existsSync(currentMaster)) await fsp.cp(currentMaster, path.join(safety, 'master'), { recursive: true });
+    await fsp.writeFile(path.join(safety, 'meta.json'), JSON.stringify({ createdAt:new Date().toISOString(), kind:'pre-restore', masterBasePath:currentMaster, hasMaster:!!currentMaster }, null, 2), 'utf8');
+
+    await fsp.copyFile(sourceDb, dbFile);
+    await fsp.rm(`${dbFile}-wal`, { force: true }).catch(() => {});
+    await fsp.rm(`${dbFile}-shm`, { force: true }).catch(() => {});
+    if (meta?.hasMaster && currentMaster && fs.existsSync(sourceMaster)) {
+      await fsp.rm(currentMaster, { recursive: true, force: true });
+      await fsp.mkdir(path.dirname(currentMaster), { recursive: true });
+      await fsp.cp(sourceMaster, currentMaster, { recursive: true });
+    }
+    await startPackagedBackend();
+    setTimeout(() => mainWindow?.reload(), 250);
+    return { ok:true };
+  } catch (error) {
+    try {
+      const safetyDb = path.join(safety, 'createur-ao.db');
+      if (fs.existsSync(safetyDb)) await fsp.copyFile(safetyDb, dbFile);
+      const safetyMaster = path.join(safety, 'master');
+      if (currentMaster && fs.existsSync(safetyMaster)) {
+        await fsp.rm(currentMaster, { recursive:true, force:true });
+        await fsp.cp(safetyMaster, currentMaster, { recursive:true });
+      }
+      await startPackagedBackend();
+    } catch {}
+    throw error;
+  }
 });
 
 app.whenReady().then(async () => {

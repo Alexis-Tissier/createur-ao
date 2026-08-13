@@ -22,11 +22,14 @@ const DATA_DIR = process.env.AO_CREATOR_DATA_DIR
   ? path.resolve(process.env.AO_CREATOR_DATA_DIR)
   : path.join(ROOT, 'data');
 const DB_FILE = path.join(DATA_DIR, 'createur-ao.db');
+const BACKUP_DIR = path.join(DATA_DIR, 'backups');
+const BACKUP_KEEP = 10;
+const BACKUP_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 const DIST_DIR = path.join(ROOT, 'dist');
 const PEER_ID = sanitizePeer(process.env.COMPUTERNAME || os.hostname() || 'PC-INCONNU');
 const SYNC_INTERVAL_MS = 5000;
 const STATUS_SCAN_INTERVAL_MS = 60000;
-const STATUS_VALUES = new Set(['a_attribuer', 'en_cours', 'envoye', 'gagne', 'perdu']);
+const STATUS_VALUES = new Set(['a_attribuer', 'en_cours', 'envoye', 'gagne', 'perdu', 'introuvable']);
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(DB_FILE);
@@ -559,6 +562,31 @@ async function scanStageDirectory(stageRoot, status, destination) {
   return changed;
 }
 let scanBusy = false;
+async function markMissingOffers() {
+  let changed = 0;
+  const rows = db.prepare('SELECT uid,folder_name,status,final_path,base_path FROM offers').all();
+  for (const row of rows) {
+    if (!row.final_path) continue;
+    const finalStat = await fsp.stat(row.final_path).catch(() => null);
+    if (finalStat?.isDirectory()) {
+      if (row.status === 'introuvable') {
+        db.prepare("UPDATE offers SET status='a_attribuer',last_actor_pc=?,updated_at=? WHERE uid=?").run('SYSTEM', nowIso(), row.uid);
+        const fresh = offerByUid(row.uid);
+        queueEvent({ type:'offer.snapshot', offerUid:row.uid, payload:{offer:serializeOffer(fresh)}, action:'Dossier retrouvé', details:row.final_path, status:fresh.status });
+        changed += 1;
+      }
+      continue;
+    }
+    const baseStat = row.base_path ? await fsp.stat(row.base_path).catch(() => null) : null;
+    if (!baseStat?.isDirectory()) continue; // chemin réseau indisponible : ne pas conclure à une suppression
+    if (row.status === 'introuvable') continue;
+    db.prepare("UPDATE offers SET status='introuvable',last_actor_pc=?,updated_at=? WHERE uid=?").run('SYSTEM', nowIso(), row.uid);
+    const fresh = offerByUid(row.uid);
+    queueEvent({ type:'offer.snapshot', offerUid:row.uid, payload:{offer:serializeOffer(fresh)}, action:'Dossier introuvable', details:row.final_path, status:'introuvable' });
+    changed += 1;
+  }
+  return changed;
+}
 async function scanStatuses() {
   if (scanBusy) return { changed: 0 };
   scanBusy = true;
@@ -572,8 +600,97 @@ async function scanStatuses() {
         if (stageRoot) changed += await scanStageDirectory(stageRoot, status, destination);
       }
     }
+    changed += await markMissingOffers();
     return { changed };
   } finally { scanBusy = false; }
+}
+
+function localDateKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+function localTimeKey(date = new Date()) {
+  return `${localDateKey(date)}-${String(date.getHours()).padStart(2,'0')}${String(date.getMinutes()).padStart(2,'0')}${String(date.getSeconds()).padStart(2,'0')}`;
+}
+async function backupRows() {
+  await fsp.mkdir(BACKUP_DIR, { recursive: true });
+  const entries = await fsp.readdir(BACKUP_DIR, { withFileTypes: true }).catch(() => []);
+  const rows = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('backup-')) continue;
+    const folder = path.join(BACKUP_DIR, entry.name);
+    let meta = {};
+    try { meta = JSON.parse(await fsp.readFile(path.join(folder, 'meta.json'), 'utf8')); } catch {}
+    const stat = await fsp.stat(folder).catch(() => null);
+    const dbStat = await fsp.stat(path.join(folder, 'createur-ao.db')).catch(() => null);
+    if (!dbStat?.isFile()) continue;
+    rows.push({
+      name: entry.name,
+      path: folder,
+      createdAt: meta.createdAt || stat?.mtime?.toISOString?.() || nowIso(),
+      kind: meta.kind || 'manual',
+      hasMaster: !!meta.hasMaster,
+      databaseSize: dbStat.size
+    });
+  }
+  rows.sort((a,b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  return rows;
+}
+async function pruneBackups() {
+  const rows = await backupRows();
+  for (const row of rows.slice(BACKUP_KEEP)) await fsp.rm(row.path, { recursive: true, force: true });
+}
+let backupBusy = false;
+async function createSystemBackup({ force = false, kind = 'daily' } = {}) {
+  if (backupBusy) throw new Error('Une sauvegarde est déjà en cours.');
+  await fsp.mkdir(BACKUP_DIR, { recursive: true });
+  const now = new Date();
+  const dailyName = `backup-${localDateKey(now)}`;
+  if (!force) {
+    const existing = path.join(BACKUP_DIR, dailyName);
+    const dbStat = await fsp.stat(path.join(existing, 'createur-ao.db')).catch(() => null);
+    if (dbStat?.isFile()) {
+      await pruneBackups();
+      return (await backupRows()).find(x => x.path === existing) || null;
+    }
+  }
+  backupBusy = true;
+  const baseName = force ? `backup-${localTimeKey(now)}` : dailyName;
+  let name = baseName;
+  let finalPath = path.join(BACKUP_DIR, name);
+  if (force && fs.existsSync(finalPath)) {
+    name = `${baseName}-${Date.now()}`;
+    finalPath = path.join(BACKUP_DIR, name);
+  }
+  const tempPath = path.join(BACKUP_DIR, `.${name}-${process.pid}-${Date.now()}`);
+  try {
+    while (syncBusy) await new Promise(r => setTimeout(r, 100));
+    await syncMaster();
+    while (syncBusy) await new Promise(r => setTimeout(r, 100));
+    await fsp.mkdir(tempPath, { recursive: true });
+    await db.backup(path.join(tempPath, 'createur-ao.db'));
+    const master = masterBaseDir();
+    const masterStat = master ? await fsp.stat(master).catch(() => null) : null;
+    const hasMaster = !!masterStat?.isDirectory();
+    if (hasMaster) await fsp.cp(master, path.join(tempPath, 'master'), { recursive: true });
+    await fsp.writeFile(path.join(tempPath, 'meta.json'), JSON.stringify({
+      version: 1,
+      createdAt: nowIso(),
+      kind,
+      peerId: PEER_ID,
+      masterRoot: getSetting('master_root'),
+      masterBasePath: master,
+      hasMaster
+    }, null, 2), 'utf8');
+    await fsp.rename(tempPath, finalPath);
+    await pruneBackups();
+    return (await backupRows()).find(x => x.path === finalPath) || null;
+  } catch (error) {
+    await fsp.rm(tempPath, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  } finally { backupBusy = false; }
 }
 
 const app = express();
@@ -620,6 +737,8 @@ app.put('/api/settings/shared', async (req, res) => {
 app.get('/api/sync/status', (_req, res) => res.json({ configured: !!getSetting('master_root'), peerId: PEER_ID, lastSync, error: lastSyncError }));
 app.post('/api/sync/run', async (_req, res) => { await syncMaster(); res.json({ ok: !lastSyncError, lastSync, error: lastSyncError }); });
 app.post('/api/scan-status', async (_req, res) => res.json(await scanStatuses()));
+app.get('/api/backups', async (_req,res)=>{try{res.json(await backupRows());}catch(error){res.status(500).json({error:String(error?.message||error)});}});
+app.post('/api/backups', async (_req,res)=>{try{res.status(201).json(await createSystemBackup({force:true,kind:'manual'}));}catch(error){res.status(500).json({error:String(error?.message||error)});}});
 
 app.get('/api/actors', (_req, res) => {
   const seen = db.prepare(`SELECT pc_id FROM actors UNION SELECT created_by_pc FROM offers WHERE created_by_pc<>'' UNION SELECT last_actor_pc FROM offers WHERE last_actor_pc<>'' UNION SELECT actor_pc_id FROM activity_log WHERE actor_pc_id<>''`).all();
@@ -800,7 +919,9 @@ app.use((error,_req,res,_next)=>{console.error(error);res.status(500).json({erro
 const server = app.listen(PORT,'127.0.0.1',()=>console.log(`API Créateur d’AO v0.4 prête sur ${PORT} (${PEER_ID}).`));
 const syncTimer = setInterval(syncMaster,SYNC_INTERVAL_MS); syncTimer.unref?.();
 const scanTimer = setInterval(scanStatuses,STATUS_SCAN_INTERVAL_MS); scanTimer.unref?.();
+const backupTimer = setInterval(()=>{createSystemBackup().catch(error=>console.error('Sauvegarde automatique:',error));},BACKUP_CHECK_INTERVAL_MS); backupTimer.unref?.();
 setTimeout(syncMaster,800).unref?.();
 setTimeout(scanStatuses,5000).unref?.();
-function close(){clearInterval(syncTimer);clearInterval(scanTimer);server.close(()=>{db.close();process.exit(0);});}
+setTimeout(()=>{createSystemBackup().catch(error=>console.error('Sauvegarde automatique:',error));},2500).unref?.();
+function close(){clearInterval(syncTimer);clearInterval(scanTimer);clearInterval(backupTimer);server.close(()=>{db.close();process.exit(0);});}
 process.on('SIGINT',close); process.on('SIGTERM',close);

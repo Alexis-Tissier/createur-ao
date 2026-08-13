@@ -5,7 +5,8 @@ const STATUS = {
   en_cours: 'En cours',
   envoye: 'Envoyé',
   gagne: 'Gagné',
-  perdu: 'Perdu'
+  perdu: 'Perdu',
+  introuvable: 'Introuvable'
 };
 
 function Icon({ name, size = 18 }) {
@@ -51,6 +52,20 @@ function clean(value) { return String(value || '').trim().replace(/_/g, '-'); }
 function preview(form) {
   const [y='AAAA',m='MM',d='JJ'] = String(form.date || '').split('-');
   return [y||'AAAA',m||'MM',d||'JJ',clean(form.ca)||'XX',clean(form.be)||'XX',clean(form.client)||'XX',clean(form.title)||'INTITULE',clean(form.commercial),clean(form.quoteNumber)].join('_');
+}
+function contactHref(value) {
+  const text=String(value||'').trim();
+  if(!text)return '';
+  const url=text.match(/https?:\/\/[^\s,;]+|www\.[^\s,;]+/i)?.[0];
+  if(url)return /^https?:\/\//i.test(url)?url:`https://${url}`;
+  const email=text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
+  return email?`mailto:${email}`:'';
+}
+function ContactCellV4({value}){
+  const text=String(value||'').trim();
+  if(!text)return <span className="muted-cell">—</span>;
+  const href=contactHref(text);
+  return href?<a className="v4-contact-link" href={href} target="_blank" rel="noreferrer" title={text}>{text}</a>:<span className="v4-contact-text" title={text}>{text}</span>;
 }
 function Field({ label, children, wide = false }) { return <label className={`v4-field ${wide ? 'wide' : ''}`}><span>{label}</span>{children}</label>; }
 function Toast({ value, close }) {
@@ -167,19 +182,20 @@ function TrackingRowV4({row,followup}){
   return <div className="v4-track-row">
     <div className="offer-cell"><strong>{row.title}</strong><code>{row.folderName}</code></div>
     <div className="muted-cell">{row.client||row.be||'—'}<small>{row.client&&row.be?`BE : ${row.be}`:''}</small></div>
+    <ContactCellV4 value={row.contact}/>
     <div className="destination-chip">{row.destinationName||'Création'}</div>
     <div className={`status-badge ${row.status}`}>{STATUS[row.status]||row.status}</div>
     <div className="v4-date-cell">{row.date ? new Date(`${row.date}T12:00:00`).toLocaleDateString('fr-FR') : '—'}</div>
-    <div className="v4-track-actions"><div className="muted-cell"><strong>{row.lastActorName||row.lastActorPc||'—'}</strong><small>{row.updatedAt?new Date(row.updatedAt).toLocaleString('fr-FR'):''}</small></div><button className="small-action" onClick={followup}>Relance</button><small>{row.lastFollowupAt?`${row.lastFollowupAt} · ${row.followupCount}`:'Aucune relance'}</small></div>
+    <div className="v4-track-actions"><div className="muted-cell"><strong>{row.lastActorName||row.lastActorPc||'—'}</strong><small>{row.updatedAt?new Date(row.updatedAt).toLocaleString('fr-FR'):''}</small></div><button type="button" className="small-action" onClick={followup}>Relance</button><small>{row.lastFollowupAt?`${row.lastFollowupAt} · ${row.followupCount}`:'Aucune relance'}</small></div>
   </div>;
 }
 
 function TrackingPage({ offers, reload, toast }) {
   const [query,setQuery]=useState('');const [status,setStatus]=useState('');const [destination,setDestination]=useState('');const [followup,setFollowup]=useState(null);
-  const rows=useMemo(()=>offers.filter(r=>{const q=query.trim().toLocaleLowerCase('fr');const okQ=!q||[r.folderName,r.title,r.client,r.be,r.ca,r.destinationName,r.createdByName,r.lastActorName].some(v=>String(v||'').toLocaleLowerCase('fr').includes(q));return okQ&&(!status||r.status===status)&&(!destination||r.destinationName===destination);}),[offers,query,status,destination]);
+  const rows=useMemo(()=>offers.filter(r=>{const q=query.trim().toLocaleLowerCase('fr');const okQ=!q||[r.folderName,r.title,r.client,r.be,r.ca,r.contact,r.destinationName,r.createdByName,r.lastActorName].some(v=>String(v||'').toLocaleLowerCase('fr').includes(q));return okQ&&(!status||r.status===status)&&(!destination||r.destinationName===destination);}),[offers,query,status,destination]);
   const destinations=[...new Set(offers.map(x=>x.destinationName).filter(Boolean))].sort();
-  async function scan(){try{const r=await api('/api/scan-status',{method:'POST'});await reload();toast({message:r.changed?`${r.changed} statut(s) détecté(s).`:'Aucun changement détecté.'});}catch(error){toast({type:'error',message:error.message});}}
-  return <main className="content history-page v4-compact-page"><header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button className="secondary-button" onClick={scan}><Icon name="refresh" size={15}/>Scanner les emplacements</button></header><div className="v4-filters v4-filters-3"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={destination} onChange={e=>setDestination(e.target.value)}><option value="">Toutes les destinations</option>{destinations.map(d=><option key={d}>{d}</option>)}</select></div><section className="v4-table-card"><div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Destination</span><span>Statut</span><span>Échéance</span><span>Suivi</span></div>{!rows.length?<div className="empty-state"><strong>Aucun AO</strong></div>:rows.map(row=><TrackingRowV4 key={row.uid} row={row} followup={()=>setFollowup(row)}/>)}</section>{followup&&<FollowupModalV4 row={followup} close={()=>setFollowup(null)} reload={reload} toast={toast}/>}</main>;
+  async function scan(){try{const r=await api('/api/scan-status',{method:'POST'});await reload();toast({message:r.changed?`${r.changed} changement(s) détecté(s).`:'Aucun changement détecté.'});}catch(error){toast({type:'error',message:error.message});}}
+  return <main className="content history-page v4-compact-page"><header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button type="button" className="secondary-button" onClick={scan}><Icon name="refresh" size={15}/>Scanner les emplacements</button></header><div className="v4-filters v4-filters-3"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={destination} onChange={e=>setDestination(e.target.value)}><option value="">Toutes les destinations</option>{destinations.map(d=><option key={d}>{d}</option>)}</select></div><section className="v4-table-card"><div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Contact</span><span>Destination</span><span>Statut</span><span>Échéance</span><span>Suivi</span></div>{!rows.length?<div className="empty-state"><strong>Aucun AO</strong></div>:rows.map(row=><TrackingRowV4 key={row.uid} row={row} followup={()=>setFollowup(row)}/>)}</section>{followup&&<FollowupModalV4 row={followup} close={()=>setFollowup(null)} reload={reload} toast={toast}/>}</main>;
 }
 
 function LogsPage({ toast }) {
@@ -219,7 +235,7 @@ function DestinationEditorV4({ destinations, reload, toast, mode='creation' }) {
 
 function DestinationSettingsV4({settings,reload,toast}){
   const [tab,setTab]=useState('creation');
-  return <section className="settings-panel"><header className="panel-title"><div><span className="eyebrow">Emplacements</span><h2>Destinations</h2></div></header><div className="v4-tabs"><button className={tab==='creation'?'active':''} onClick={()=>setTab('creation')}>Création</button><button className={tab==='transfer'?'active':''} onClick={()=>setTab('transfer')}>Transfert</button></div>{tab==='creation'?<><p>Emplacements proposés lorsque l’AO est créé pour la première fois.</p><DestinationEditorV4 mode="creation" destinations={settings.destinations||[]} reload={reload} toast={toast}/></>:<><p>Un chemin correspond à la racine d’un service (CET, CES…). Le transfert place automatiquement l’AO dans le sous-dossier commençant par <strong>2 </strong>. Les statuts sont ensuite détectés avec les dossiers <strong>2 / 3 / 4 / 5</strong>, quel que soit le texte après le numéro.</p><DestinationEditorV4 mode="transfer" destinations={settings.transferDestinations||[]} reload={reload} toast={toast}/></>}</section>;
+  return <section className="settings-panel"><header className="panel-title"><div><span className="eyebrow">Emplacements</span><h2>Destinations</h2></div></header><div className="v4-destination-switch"><button type="button" className={tab==='creation'?'active':''} onClick={()=>setTab('creation')}><span className="v4-switch-icon"><Icon name="create" size={18}/></span><span><strong>Création</strong><small>Où les nouveaux AO sont créés</small></span></button><button type="button" className={tab==='transfer'?'active':''} onClick={()=>setTab('transfer')}><span className="v4-switch-icon"><Icon name="transfer" size={18}/></span><span><strong>Transfert</strong><small>Services et dossiers 2 / 3 / 4 / 5</small></span></button></div>{tab==='creation'?<><p>Emplacements proposés lorsque l’AO est créé pour la première fois.</p><DestinationEditorV4 mode="creation" destinations={settings.destinations||[]} reload={reload} toast={toast}/></>:<><p>Un chemin correspond à la racine d’un service (CET, CES…). Le transfert place automatiquement l’AO dans le sous-dossier commençant par <strong>2 </strong>. Les statuts sont ensuite détectés avec les dossiers <strong>2 / 3 / 4 / 5</strong>, quel que soit le texte après le numéro.</p><DestinationEditorV4 mode="transfer" destinations={settings.transferDestinations||[]} reload={reload} toast={toast}/></>}</section>;
 }
 
 function mapTreeV4(nodes,id,fn){return nodes.map(n=>n.id===id?fn(n):{...n,children:mapTreeV4(n.children||[],id,fn)});}
@@ -249,21 +265,36 @@ function FirstRunV4({reload,manual,toast}){
   return <div className="overlay first-run-overlay"><section className="modal first-run-modal"><header><div><span className="eyebrow">Premier lancement</span><h2>Initialiser Créateur d’AO</h2></div></header><p>Tu peux reprendre un modèle existant ou configurer manuellement le poste. La base maître commune se règle ensuite dans Réglages.</p><button className="config-file-button" onClick={choose} disabled={busy}><Icon name="folder"/><span><strong>{selected?'Modèle sélectionné':'Choisir le fichier de configuration'}</strong><small>{selected?.path||'Destinations + arborescence'}</small></span></button><footer><button className="secondary-button" onClick={skip}>Configurer manuellement</button><button className="primary-button" onClick={run} disabled={!selected||busy}>Importer et continuer</button></footer></section></div>;
 }
 
+function BackupsPanelV4({toast}){
+  const [backups,setBackups]=useState([]);const [busy,setBusy]=useState(false);
+  async function load(){try{setBackups(await api('/api/backups'));}catch(error){toast({type:'error',message:error.message});}}
+  useEffect(()=>{load();},[]);
+  async function createNow(){try{setBusy(true);await api('/api/backups',{method:'POST'});await load();toast({message:'Sauvegarde créée.'});}catch(error){toast({type:'error',message:error.message});}finally{setBusy(false);}}
+  async function restore(item){
+    if(!window.createurAO?.restoreBackup)return toast({type:'error',message:'La restauration est disponible dans l’application Windows.'});
+    if(!confirm(`Restaurer la sauvegarde du ${new Date(item.createdAt).toLocaleString('fr-FR')} ?\n\nFermez Créateur d’AO sur les autres postes avant une restauration, afin d’éviter qu’ils écrivent dans la base maître pendant l’opération.`))return;
+    try{setBusy(true);await window.createurAO.restoreBackup(item.path);toast({message:'Sauvegarde restaurée. Rechargement…'});}catch(error){toast({type:'error',message:String(error?.message||error)});setBusy(false);}
+  }
+  const size=n=>n?`${(Number(n)/1024/1024).toFixed(1)} Mo`:'—';
+  return <section className="settings-panel"><header className="panel-title"><div><span className="eyebrow">Sécurité</span><h2>Sauvegardes</h2></div><button type="button" className="secondary-button" onClick={createNow} disabled={busy}><Icon name="refresh" size={15}/>{busy?'Patiente…':'Sauvegarder maintenant'}</button></header><p>Une sauvegarde automatique est créée chaque jour. Les 10 plus récentes sont conservées. Si une base maître est configurée, sa copie est incluse avec la base locale.</p><div className="v4-backup-list">{!backups.length?<div className="v4-backup-empty">Aucune sauvegarde pour le moment.</div>:backups.map(item=><div className="v4-backup-row" key={item.name}><div><strong>{new Date(item.createdAt).toLocaleString('fr-FR')}</strong><small>{item.kind==='daily'?'Automatique':item.kind==='pre-restore'?'Avant restauration':'Manuelle'} · {size(item.databaseSize)}{item.hasMaster?' · base maître incluse':''}</small></div><button type="button" className="secondary-button" onClick={()=>restore(item)} disabled={busy}>Restaurer</button></div>)}</div></section>;
+}
+
 function SettingsPage({ settings, reloadSettings, toast }) {
   const [shared,setShared]=useState({masterRoot:settings.masterRoot||''});
-  const [actors,setActors]=useState([]);const [sync,setSync]=useState(null);
+  const [actors,setActors]=useState([]);const [actorDrafts,setActorDrafts]=useState({});const [sync,setSync]=useState(null);
   useEffect(()=>setShared({masterRoot:settings.masterRoot||''}),[settings.masterRoot]);
   async function browse(){if(!window.createurAO?.chooseFolder)return toast({type:'error',message:'Sélecteur disponible dans l’application Windows.'});const p=await window.createurAO.chooseFolder(shared.masterRoot||'');if(p)setShared({masterRoot:p});}
   async function saveShared(){try{await api('/api/settings/shared',{method:'PUT',body:JSON.stringify(shared)});await reloadSettings();toast({message:'Base maître enregistrée.'});}catch(error){toast({type:'error',message:error.message});}}
   async function syncNow(){try{const r=await api('/api/sync/run',{method:'POST'});setSync(r);toast({type:r.error?'error':'',message:r.error||'Synchronisation terminée.'});}catch(error){toast({type:'error',message:error.message});}}
-  async function loadActors(){setActors(await api('/api/actors'));}
+  async function loadActors(){const rows=await api('/api/actors');setActors(rows);setActorDrafts(Object.fromEntries(rows.map(a=>[a.pcId,a.displayName||''])));}
   useEffect(()=>{loadActors();api('/api/sync/status').then(setSync).catch(()=>{});},[]);
-  async function saveActor(a){try{await api(`/api/actors/${encodeURIComponent(a.pcId)}`,{method:'PUT',body:JSON.stringify({displayName:a.displayName})});await loadActors();toast({message:'Nom enregistré.'});}catch(error){toast({type:'error',message:error.message});}}
+  async function saveActor(a){try{const displayName=actorDrafts[a.pcId]??'';await api(`/api/actors/${encodeURIComponent(a.pcId)}`,{method:'PUT',body:JSON.stringify({displayName})});await loadActors();toast({message:'Nom enregistré.'});}catch(error){toast({type:'error',message:error.message});}}
   return <main className="content settings-page v4-compact-page"><header className="page-title"><div><span className="eyebrow">Configuration</span><h1>Réglages</h1></div></header>
-    <section className="settings-panel"><header className="panel-title"><div><span className="eyebrow">Multi-postes</span><h2>Base maître</h2></div><button className="secondary-button" onClick={syncNow}><Icon name="refresh" size={15}/>Synchroniser</button></header><p>Choisis le dossier commun du serveur. L’application y crée automatiquement <code>Createur-AO-Base</code>. Le SQLite reste local : aucun fichier SQLite n’est ouvert directement à travers le réseau.</p><div className="v4-settings-grid v4-settings-grid-single"><Field label="Dossier serveur maître" wide><div className="v4-path"><input value={shared.masterRoot} onChange={e=>setShared({masterRoot:e.target.value})} placeholder="Choisir le dossier commun"/><button type="button" onClick={browse}><Icon name="folder"/></button></div></Field></div><div className="v4-settings-footer"><span>PC : <strong>{settings.peerId}</strong>{sync?.lastSync?` · dernière synchro ${new Date(sync.lastSync).toLocaleTimeString('fr-FR')}`:''}{sync?.error?<em> · {sync.error}</em>:''}</span><button className="primary-button" onClick={saveShared}>Enregistrer</button></div></section>
+    <section className="settings-panel"><header className="panel-title"><div><span className="eyebrow">Multi-postes</span><h2>Base maître</h2></div><button type="button" className="secondary-button" onClick={syncNow}><Icon name="refresh" size={15}/>Synchroniser</button></header><p>Choisis le dossier commun du serveur. L’application y crée automatiquement <code>Createur-AO-Base</code>. Le SQLite reste local : aucun fichier SQLite n’est ouvert directement à travers le réseau.</p><div className="v4-settings-grid v4-settings-grid-single"><Field label="Dossier serveur maître" wide><div className="v4-path"><input value={shared.masterRoot} onChange={e=>setShared({masterRoot:e.target.value})} placeholder="Choisir le dossier commun"/><button type="button" onClick={browse}><Icon name="folder"/></button></div></Field></div><div className="v4-settings-footer"><span>PC : <strong>{settings.peerId}</strong>{sync?.lastSync?` · dernière synchro ${new Date(sync.lastSync).toLocaleTimeString('fr-FR')}`:''}{sync?.error?<em> · {sync.error}</em>:''}</span><button type="button" className="primary-button" onClick={saveShared}>Enregistrer</button></div></section>
     <DestinationSettingsV4 settings={settings} reload={reloadSettings} toast={toast}/>
     <TreeEditorV4 initialTree={settings.tree||[]} reload={reloadSettings} toast={toast}/>
-    <section className="settings-panel"><header className="panel-title"><div><span className="eyebrow">Identification</span><h2>Personnes</h2></div><Icon name="users"/></header><p>Le nom du PC identifie l’auteur. Le nom affiché est modifiable.</p><div className="v4-actor-list">{actors.map((a,i)=><div key={a.pcId}><code>{a.pcId}</code><input value={a.displayName} onChange={e=>setActors(v=>v.map((x,j)=>j===i?{...x,displayName:e.target.value}:x))} placeholder="Nom de la personne"/><button className="secondary-button" onClick={()=>saveActor(a)}>Enregistrer</button></div>)}</div></section>
+    <section className="settings-panel"><header className="panel-title"><div><span className="eyebrow">Identification</span><h2>Personnes</h2></div><Icon name="users"/></header><p>Le nom affiché est modifiable directement ci-dessous. Le PC courant est mis en évidence.</p><div className="v4-actor-list">{actors.map(a=><div className={`v4-actor-row ${a.pcId===settings.peerId?'current':''}`} key={a.pcId}><div className="v4-actor-id"><code>{a.pcId}</code>{a.pcId===settings.peerId&&<span>Ce PC</span>}</div><input type="text" autoComplete="off" value={actorDrafts[a.pcId]??''} onChange={e=>setActorDrafts(v=>({...v,[a.pcId]:e.target.value}))} placeholder="Nom de la personne"/><button type="button" className="secondary-button" onClick={()=>saveActor(a)}>Enregistrer</button></div>)}</div></section>
+    <BackupsPanelV4 toast={toast}/>
     <BootstrapPanelV4 settings={settings} reload={reloadSettings} toast={toast}/>
   </main>;
 }

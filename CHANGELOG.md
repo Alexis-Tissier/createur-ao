@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.1-beta.2
+
+- interface réagrandie après le premier compactage, tout en restant visible sans défilement sur la page de création ;
+- colonne Contact ajoutée au suivi, avec ouverture du navigateur pour les URL et du client mail pour les adresses e-mail ;
+- statut `Introuvable` lorsqu’un dossier AO suivi a été supprimé ou déplacé hors des emplacements connus, sans faux positif si le chemin réseau de base est indisponible ;
+- éditeur des noms de personnes fiabilisé dans Réglages, avec le PC courant mis en évidence ;
+- sélecteur Création / Transfert des destinations rendu beaucoup plus visible ;
+- sauvegarde automatique quotidienne de la base locale et, lorsqu’elle existe, de la base maître partagée ; conservation des 10 sauvegardes les plus récentes ;
+- restauration depuis Réglages avec sauvegarde de sécurité préalable.
+
 ## v0.4.0
 
 - ajout du champ Client après le BE dans le nom `AAAA_MM_JJ_CA_BE_CLIENT_INTITULE_COM_DEVIS` ;

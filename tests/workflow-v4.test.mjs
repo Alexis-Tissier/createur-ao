@@ -55,5 +55,12 @@ test('échéance=date AO, transfert dédié et dossiers 2/3/4/5', {timeout:25000
     await json(base+'/api/scan-status',{method:'POST'});
     const after4=(await json(base+'/api/offers')).find(x=>x.uid===offer.uid);
     assert.equal(after4.status,'gagne');
+    await fs.rm(target4,{recursive:true,force:true});
+    await json(base+'/api/scan-status',{method:'POST'});
+    const missing=(await json(base+'/api/offers')).find(x=>x.uid===offer.uid);
+    assert.equal(missing.status,'introuvable');
+    const backup=await json(base+'/api/backups',{method:'POST'});
+    assert.equal(backup.kind,'manual');
+    assert.equal((await fs.stat(path.join(backup.path,'createur-ao.db'))).isFile(),true);
   }catch(error){throw new Error(error.message+'\n'+stderr);}finally{child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));await fs.rm(root,{recursive:true,force:true});}
 });

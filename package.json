@@ -1,6 +1,6 @@
 {
   "name": "createur-ao",
-  "version": "0.4.1-beta.1",
+  "version": "0.4.1-beta.2",
   "private": true,
   "type": "module",
   "description": "Création, transfert et suivi partagé des appels d'offres.",
