@@ -1,6 +1,6 @@
 {
   "name": "createur-ao",
-  "version": "0.4.1-beta.10",
+  "version": "0.4.1-beta.11",
   "private": true,
   "type": "module",
   "description": "Création, transfert et suivi partagé multi-postes des appels d'offres Windows.",
@@ -11,14 +11,14 @@
   },
   "scripts": {
     "dev": "node scripts/dev.mjs",
-    "build": "npm run prepare:icon && vite build",
+    "build": "vite build",
     "start": "node server.mjs",
     "test": "node --test",
     "check": "npm test && npm run build && node --check server.mjs && node --check server-v4.mjs && node --check desktop/main.cjs && node --check desktop/preload.cjs",
-    "prepare:icon": "node scripts/prepare-icon.mjs",
+    "prepare:windows-icon": "python scripts/generate-windows-icon.py",
     "desktop:dev": "node scripts/dev.mjs",
-    "dist:win": "npm run build && electron-builder --win nsis portable --x64 --publish never",
-    "dist:win:dir": "npm run build && electron-builder --win --dir --x64 --publish never"
+    "dist:win": "npm run build && npm run prepare:windows-icon && electron-builder --win nsis portable --x64 --publish never",
+    "dist:win:dir": "npm run build && npm run prepare:windows-icon && electron-builder --win --dir --x64 --publish never"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0",
@@ -52,12 +52,12 @@
     ],
     "extraResources": [
       {
-        "from": "build/icon.png",
-        "to": "icon.png"
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "win": {
-      "icon": "build/icon.png",
+      "icon": "build/icon.ico",
       "executableName": "Createur-AO",
       "target": [
         {
