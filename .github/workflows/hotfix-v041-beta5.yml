@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'scripts/hotfix_v041_beta5.py'
+      - 'scripts/hotfix_v041_beta5_testfix.py'
       - '.github/workflows/hotfix-v041-beta5.yml'
   workflow_dispatch:
 
@@ -20,7 +21,9 @@ jobs:
         with:
           node-version: '22'
       - name: Apply feedback changes
-        run: python3 scripts/hotfix_v041_beta5.py
+        run: |
+          python3 scripts/hotfix_v041_beta5.py
+          python3 scripts/hotfix_v041_beta5_testfix.py
       - name: Install dependencies
         run: npm ci
       - name: Validate
