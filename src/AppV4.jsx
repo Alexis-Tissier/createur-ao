@@ -67,6 +67,20 @@ function ContactCellV4({value}){
   const href=contactHref(text);
   return href?<a className="v4-contact-link" href={href} target="_blank" rel="noreferrer" title={text}>{text}</a>:<span className="v4-contact-text" title={text}>{text}</span>;
 }
+function rawPriceInput(value){
+  const text=String(value??'').trim();
+  if(!text)return '';
+  const compact=text.replace(/[\u00a0\u202f\s€]/g,'').replace(',','.').replace(/[^0-9.-]/g,'');
+  const number=Number(compact);
+  if(!Number.isFinite(number)||number<0)return text;
+  return Number.isInteger(number)?String(number):String(Math.round(number*100)/100);
+}
+function formatPriceCurrency(value){
+  const raw=rawPriceInput(value);
+  const number=Number(raw);
+  if(!raw||!Number.isFinite(number))return String(value||'');
+  return new Intl.NumberFormat('fr-FR',{style:'currency',currency:'EUR',minimumFractionDigits:0,maximumFractionDigits:2}).format(number);
+}
 function Field({ label, children, wide = false }) { return <label className={`v4-field ${wide ? 'wide' : ''}`}><span>{label}</span>{children}</label>; }
 function Toast({ value, close }) {
   useEffect(() => { if (!value) return; const t = setTimeout(close, 3600); return () => clearTimeout(t); }, [value, close]);
@@ -181,16 +195,17 @@ function FollowupModalV4({row,close,reload,toast}){
 }
 
 function PriceCellV4({row,reload,toast}){
-  const [value,setValue]=useState(row.price||'');const [busy,setBusy]=useState(false);
-  useEffect(()=>setValue(row.price||''),[row.uid,row.price]);
+  const [value,setValue]=useState(row.price||'');const [busy,setBusy]=useState(false);const [editing,setEditing]=useState(false);
+  useEffect(()=>{if(!editing)setValue(row.price||'');},[row.uid,row.price,editing]);
   async function save(){
-    const next=String(value||'').trim();
-    if(next===String(row.price||'').trim())return;
+    const next=rawPriceInput(value);
+    setEditing(false);
+    if(next===String(row.price||'').trim()){setValue(row.price||'');return;}
     try{setBusy(true);await api(`/api/offers/${row.uid}`,{method:'PATCH',body:JSON.stringify({price:next})});await reload();toast({message:'Prix enregistré.'});}
     catch(error){setValue(row.price||'');toast({type:'error',message:error.message});}
     finally{setBusy(false);}
   }
-  return <input className="v4-price-input" value={value} disabled={busy} onChange={e=>setValue(e.target.value)} onBlur={save} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();e.currentTarget.blur();}}} placeholder="—" title="Le montant est aussi écrit dans PRIX.txt"/>;
+  return <input className="v4-price-input" inputMode="decimal" value={editing?value:formatPriceCurrency(value)} disabled={busy} onFocus={()=>{setEditing(true);setValue(row.price||'');}} onChange={e=>setValue(e.target.value)} onBlur={save} onKeyDown={e=>{if(e.key==='Enter'){e.preventDefault();e.currentTarget.blur();}}} placeholder="—" title="Affichage en euros · PRIX.txt contient uniquement le nombre brut"/>;
 }
 
 function TrackingRowV4({row,followup,reload,toast}){
@@ -207,18 +222,22 @@ function TrackingRowV4({row,followup,reload,toast}){
 }
 
 function TrackingPage({ offers, reload, toast }) {
-  const [query,setQuery]=useState('');const [status,setStatus]=useState('');const [destination,setDestination]=useState('');const [followup,setFollowup]=useState(null);
+  const [query,setQuery]=useState('');const [status,setStatus]=useState('');const [destination,setDestination]=useState('');const [followup,setFollowup]=useState(null);const [scanning,setScanning]=useState(false);
   const rows=useMemo(()=>offers.filter(r=>{const q=query.trim().toLocaleLowerCase('fr');const okQ=!q||[r.folderName,r.title,r.client,r.be,r.ca,r.contact,r.price,r.destinationName,r.createdByName,r.lastActorName].some(v=>String(v||'').toLocaleLowerCase('fr').includes(q));return okQ&&(!status||r.status===status)&&(!destination||r.destinationName===destination);}),[offers,query,status,destination]);
   const destinations=[...new Set(offers.map(x=>x.destinationName).filter(Boolean))].sort();
   async function scan(){
+    if(scanning)return;
     try{
-      const r=await api('/api/scan-status',{method:'POST'});await reload();
+      setScanning(true);
+      const r=await api('/api/scan-status',{method:'POST'});
+      await reload();
       if(r.missing)toast({message:`${r.missing} dossier(s) introuvable(s) détecté(s).`});
       else if(r.changed)toast({message:`${r.changed} changement(s) détecté(s)${r.prices?` · ${r.prices} prix mis à jour`:''}.`});
-      else toast({message:'Aucun changement détecté.'});
+      else toast({message:'Scan terminé · aucun changement détecté.'});
     }catch(error){toast({type:'error',message:error.message});}
+    finally{setScanning(false);}
   }
-  return <main className="content history-page v4-compact-page"><header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button type="button" className="secondary-button" onClick={scan}><Icon name="refresh" size={15}/>Scanner les emplacements</button></header><div className="v4-filters v4-filters-3"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={destination} onChange={e=>setDestination(e.target.value)}><option value="">Toutes les destinations</option>{destinations.map(d=><option key={d}>{d}</option>)}</select></div><section className="v4-table-card"><div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Contact</span><span>Prix</span><span>Destination</span><span>Statut</span><span>Échéance</span><span>Suivi</span></div>{!rows.length?<div className="empty-state"><strong>Aucun AO</strong></div>:rows.map(row=><TrackingRowV4 key={row.uid} row={row} reload={reload} toast={toast} followup={()=>setFollowup(row)}/>)}</section>{followup&&<FollowupModalV4 row={followup} close={()=>setFollowup(null)} reload={reload} toast={toast}/>}</main>;
+  return <main className="content history-page v4-compact-page"><header className="page-title history-title"><div><span className="eyebrow">Pilotage</span><h1>Suivi des AO</h1></div><button type="button" className="secondary-button" onClick={scan} disabled={scanning}><Icon name="refresh" size={15}/>{scanning?'Scan en cours…':'Scanner les emplacements'}</button></header><div className="v4-filters v4-filters-3"><label className="search-box"><Icon name="search" size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Rechercher"/></label><select value={status} onChange={e=>setStatus(e.target.value)}><option value="">Tous les statuts</option>{Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select><select value={destination} onChange={e=>setDestination(e.target.value)}><option value="">Toutes les destinations</option>{destinations.map(d=><option key={d}>{d}</option>)}</select></div><section className="v4-table-card"><div className="v4-track-row head"><span>AO</span><span>Client / BE</span><span>Contact</span><span>Prix</span><span>Destination</span><span>Statut</span><span>Échéance</span><span>Suivi</span></div>{!rows.length?<div className="empty-state"><strong>Aucun AO</strong></div>:rows.map(row=><TrackingRowV4 key={row.uid} row={row} reload={reload} toast={toast} followup={()=>setFollowup(row)}/>)}</section>{followup&&<FollowupModalV4 row={followup} close={()=>setFollowup(null)} reload={reload} toast={toast}/>}</main>;
 }
 
 function LogsPage({ toast }) {

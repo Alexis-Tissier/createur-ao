@@ -211,12 +211,26 @@ function cleanDestinationPath(value) {
   if (!result) throw new Error('Chemin de destination obligatoire.');
   return result;
 }
-function normalizePrice(value) { return String(value ?? '').trim(); }
+function normalizePrice(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  const compact = text
+    .replace(/[\u00a0\u202f\s€]/g, '')
+    .replace(',', '.')
+    .replace(/[^0-9.-]/g, '');
+  if (!compact) return '';
+  const number = Number(compact);
+  if (!Number.isFinite(number) || number < 0) throw new Error('Prix invalide. Saisissez un montant numérique.');
+  return Number.isInteger(number) ? String(number) : String(Math.round(number * 100) / 100);
+}
 async function readOptionalTextFile(file) {
   try { return { exists:true, value:(await fsp.readFile(file, 'utf8')).trim() }; }
   catch (error) { if (error?.code === 'ENOENT') return { exists:false, value:'' }; throw error; }
 }
-async function readPriceFile(rootPath) { return readOptionalTextFile(path.join(rootPath, 'PRIX.txt')); }
+async function readPriceFile(rootPath) {
+  const result = await readOptionalTextFile(path.join(rootPath, 'PRIX.txt'));
+  return { ...result, value: result.exists ? normalizePrice(result.value) : '' };
+}
 async function writePriceFile(rootPath, value) { await fsp.writeFile(path.join(rootPath, 'PRIX.txt'), normalizePrice(value), 'utf8'); }
 async function readContactFile(rootPath) { return readOptionalTextFile(path.join(rootPath, 'CONTACTS.txt')); }
 
@@ -574,6 +588,11 @@ async function scanStageDirectory(stageRoot, status, destination) {
   return changed;
 }
 let scanBusy = false;
+async function waitForScanIdle(timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  while (scanBusy && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 75));
+  if (scanBusy) throw new Error('Le scan précédent prend trop de temps. Réessayez dans quelques secondes.');
+}
 async function markMissingOffers() {
   let changed = 0;
   const rows = db.prepare('SELECT uid,folder_name,status,final_path,base_path FROM offers').all();
@@ -589,9 +608,8 @@ async function markMissingOffers() {
       }
       continue;
     }
-    const parentStat = await fsp.stat(path.dirname(row.final_path)).catch(() => null);
     const baseStat = row.base_path ? await fsp.stat(row.base_path).catch(() => null) : null;
-    if (!parentStat?.isDirectory() && !baseStat?.isDirectory()) continue; // partage indisponible : ne pas conclure à une suppression
+    if (!baseStat?.isDirectory()) continue; // chemin réseau indisponible : ne pas conclure à une suppression
     if (row.status === 'introuvable') continue;
     db.prepare("UPDATE offers SET status='introuvable',last_actor_pc=?,updated_at=? WHERE uid=?").run('SYSTEM', nowIso(), row.uid);
     const fresh = offerByUid(row.uid);
@@ -621,8 +639,11 @@ async function syncPricesFromDisk() {
   }
   return changed;
 }
-async function scanStatuses() {
-  if (scanBusy) return { changed: 0, missing: 0, prices: 0 };
+async function scanStatuses({ waitForBusy = false } = {}) {
+  if (scanBusy) {
+    if (!waitForBusy) return { changed: 0, missing: 0, prices: 0, skipped: true };
+    await waitForScanIdle();
+  }
   scanBusy = true;
   try {
     let changed = 0;
@@ -772,7 +793,17 @@ app.put('/api/settings/shared', async (req, res) => {
 });
 app.get('/api/sync/status', (_req, res) => res.json({ configured: !!getSetting('master_root'), peerId: PEER_ID, lastSync, error: lastSyncError }));
 app.post('/api/sync/run', async (_req, res) => { await syncMaster(); res.json({ ok: !lastSyncError, lastSync, error: lastSyncError }); });
-app.post('/api/scan-status', async (_req, res) => res.json(await scanStatuses()));
+app.post('/api/scan-status', async (_req, res) => {
+  try {
+    // Le clic utilisateur attend la fin d'un éventuel scan automatique puis lance
+    // toujours un NOUVEAU scan, au lieu de retourner silencieusement « 0 changement ».
+    const result = await scanStatuses({ waitForBusy: true });
+    void syncMaster();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: String(error?.message || error) });
+  }
+});
 app.get('/api/backups', async (_req,res)=>{try{res.json(await backupRows());}catch(error){res.status(500).json({error:String(error?.message||error)});}});
 app.post('/api/backups', async (_req,res)=>{try{res.status(201).json(await createSystemBackup({force:true,kind:'manual'}));}catch(error){res.status(500).json({error:String(error?.message||error)});}});
 

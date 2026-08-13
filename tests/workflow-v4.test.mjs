@@ -39,8 +39,8 @@ test('échéance=date AO, transfert dédié et dossiers 2/3/4/5', {timeout:25000
     const offer=await json(base+'/api/offers',{method:'POST',body:JSON.stringify({date:'2026-08-12',ca:'XX',be:'BET',client:'',title:'Test',commercial:'',quoteNumber:'',contact:'contact@test.fr',price:'12 500 €',destinationId:creation.id})});
     assert.equal(offer.dueDate,'2026-08-12');
     assert.equal(offer.folderName.endsWith('Test__'),true);
-    assert.equal(offer.price,'12 500 €');
-    assert.equal((await fs.readFile(path.join(offer.finalPath,'PRIX.txt'),'utf8')).trim(),'12 500 €');
+    assert.equal(offer.price,'12500');
+    assert.equal((await fs.readFile(path.join(offer.finalPath,'PRIX.txt'),'utf8')).trim(),'12500');
     const moved=await json(base+'/api/transfer/execute',{method:'POST',body:JSON.stringify({sourcePath:offer.finalPath,offerUid:offer.uid,date:offer.date,ca:offer.ca,be:offer.be,client:offer.client,title:offer.title,commercial:'',quoteNumber:'',contact:'',destinationId:transfer.id})});
     assert.equal(moved.status,'en_cours');
     assert.equal(path.dirname(moved.finalPath),path.join(cet,'2 Offres en cours'));
@@ -61,9 +61,9 @@ test('échéance=date AO, transfert dédié et dossiers 2/3/4/5', {timeout:25000
     const priceScan=await json(base+'/api/scan-status',{method:'POST'});
     assert.equal(priceScan.prices,1);
     const repriced=(await json(base+'/api/offers')).find(x=>x.uid===offer.uid);
-    assert.equal(repriced.price,'13 250 €');
+    assert.equal(repriced.price,'13250');
     await json(base+`/api/offers/${offer.uid}`,{method:'PATCH',body:JSON.stringify({price:'14 000 €'})});
-    assert.equal((await fs.readFile(path.join(target4,'PRIX.txt'),'utf8')).trim(),'14 000 €');
+    assert.equal((await fs.readFile(path.join(target4,'PRIX.txt'),'utf8')).trim(),'14000');
     await fs.rm(target4,{recursive:true,force:true});
     await json(base+'/api/scan-status',{method:'POST'});
     const missing=(await json(base+'/api/offers')).find(x=>x.uid===offer.uid);
