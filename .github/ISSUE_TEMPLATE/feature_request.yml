@@ -1,0 +1,33 @@
+name: Proposer une amélioration
+description: Suggérer une évolution de l’expérience ou du workflow
+title: "[Idée] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Une bonne proposition commence par le problème utilisateur à résoudre. Merci de rester générique et de ne publier aucune information interne ou confidentielle.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problème à résoudre
+      description: Quelle difficulté rencontre l’utilisateur aujourd’hui ?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Solution proposée
+      description: Décrivez le comportement souhaité sans imposer nécessairement une implémentation technique.
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Impact sur le workflow actuel
+      description: La proposition modifie-t-elle la création, le transfert, le suivi, la synchronisation ou le déploiement ?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives envisagées
+      description: Facultatif — existe-t-il une solution plus simple ou un contournement actuel ?

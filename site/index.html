@@ -3,187 +3,228 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#f6f5f1" />
-  <title>Créateur d'AO</title>
+  <meta name="theme-color" content="#f6f3ee" />
+  <meta name="description" content="Créateur d’AO — application Windows pour structurer, transférer et suivre les dossiers d’appels d’offres." />
+  <title>Créateur d’AO — gestion des appels d’offres</title>
   <style>
     :root {
-      --bg: #f6f5f1;
-      --surface: #ffffff;
-      --ink: #17211d;
-      --muted: #6f7772;
-      --line: #e7e8e3;
-      --accent: #ed623f;
-      --accent-dark: #d95334;
+      --bg: #f6f3ee;
+      --surface: rgba(255,255,255,.82);
+      --surface-strong: #fff;
+      --ink: #18201c;
+      --muted: #68716c;
+      --line: #e3ded6;
+      --accent: #eb6947;
+      --accent-dark: #ce5132;
+      --cream: #fff5df;
+      --shadow: 0 22px 60px rgba(48, 37, 28, .08);
     }
     * { box-sizing: border-box; }
-    html, body { min-height: 100%; }
+    html { scroll-behavior: smooth; }
     body {
       margin: 0;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
-      background: var(--bg);
+      background:
+        radial-gradient(circle at 18% 0%, rgba(235,105,71,.09), transparent 34rem),
+        var(--bg);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
     }
-    .shell {
-      min-height: 100vh;
-      display: grid;
-      grid-template-rows: auto 1fr auto;
-      width: min(1120px, calc(100% - 40px));
-      margin: 0 auto;
-    }
-    header {
-      height: 86px;
+    a { color: inherit; }
+    .wrap { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
+    nav {
+      height: 82px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       border-bottom: 1px solid var(--line);
     }
-    .brand { display: flex; align-items: center; gap: 12px; font-weight: 720; letter-spacing: -0.02em; }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 780; letter-spacing: -.025em; }
     .logo {
-      width: 38px;
-      height: 38px;
-      display: grid;
-      place-items: center;
-      border-radius: 11px;
-      background: var(--accent);
-      color: white;
-      font-size: 19px;
-      font-weight: 800;
-      box-shadow: 0 6px 18px rgba(237, 98, 63, .18);
+      width: 40px; height: 40px; border-radius: 12px;
+      display: grid; place-items: center;
+      color: var(--cream); font: 800 23px/1 Georgia, serif;
+      background: linear-gradient(145deg, #f27a54, #df5838);
+      box-shadow: 0 8px 24px rgba(223,88,56,.22), inset 0 1px 0 rgba(255,255,255,.25);
     }
-    .github {
-      color: var(--muted);
-      text-decoration: none;
-      font-size: 14px;
-      font-weight: 600;
-    }
-    .github:hover { color: var(--ink); }
-    main {
-      display: grid;
-      place-items: center;
-      padding: 70px 0 90px;
-    }
-    .hero {
-      width: min(720px, 100%);
-      text-align: center;
-    }
+    .navlinks { display: flex; align-items: center; gap: 24px; font-size: 14px; font-weight: 650; color: var(--muted); }
+    .navlinks a { text-decoration: none; }
+    .navlinks a:hover { color: var(--ink); }
+    .hero { padding: 96px 0 76px; text-align: center; }
     .eyebrow {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 7px 11px;
-      border: 1px solid #ecdcd6;
-      border-radius: 999px;
-      background: #fff8f5;
-      color: #8a5e50;
-      font-size: 12px;
-      font-weight: 700;
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 7px 12px; border: 1px solid #ead7cf; border-radius: 999px;
+      background: rgba(255,248,244,.82); color: #8e5948; font-size: 12px; font-weight: 760;
     }
     h1 {
-      margin: 24px 0 16px;
-      font-size: clamp(44px, 7vw, 76px);
-      line-height: .98;
-      letter-spacing: -0.055em;
+      max-width: 930px; margin: 24px auto 20px;
+      font-size: clamp(48px, 8vw, 86px); line-height: .96; letter-spacing: -.06em;
     }
     .lead {
-      width: min(590px, 100%);
-      margin: 0 auto;
-      color: var(--muted);
-      font-size: clamp(17px, 2vw, 20px);
-      line-height: 1.6;
+      max-width: 720px; margin: 0 auto; color: var(--muted);
+      font-size: clamp(18px, 2.3vw, 22px); line-height: 1.55;
     }
-    .actions {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      gap: 12px;
-      margin-top: 34px;
-      flex-wrap: wrap;
+    .actions { margin-top: 34px; display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+    .btn {
+      min-height: 52px; padding: 0 21px; border-radius: 13px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+      text-decoration: none; font-weight: 760; border: 1px solid var(--line);
+      background: rgba(255,255,255,.72);
     }
-    .download {
-      min-height: 52px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 10px;
-      padding: 0 22px;
-      border-radius: 13px;
-      background: var(--accent);
-      color: white;
-      text-decoration: none;
-      font-weight: 760;
-      box-shadow: 0 10px 28px rgba(237, 98, 63, .22);
-      transition: transform .16s ease, background .16s ease;
-    }
-    .download:hover { background: var(--accent-dark); transform: translateY(-1px); }
-    .meta { margin-top: 14px; color: #929994; font-size: 12px; }
+    .btn.primary { border-color: transparent; background: var(--accent); color: #fff; box-shadow: 0 12px 30px rgba(235,105,71,.25); }
+    .btn.primary:hover { background: var(--accent-dark); }
+    .btn.secondary:hover { background: #fff; }
+    .hero-meta { margin-top: 16px; color: #8e9691; font-size: 12px; }
+    section { padding: 78px 0; }
+    .section-head { max-width: 730px; margin-bottom: 34px; }
+    .kicker { color: var(--accent-dark); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; }
+    h2 { margin: 8px 0 10px; font-size: clamp(32px, 4.6vw, 50px); line-height: 1.05; letter-spacing: -.045em; }
+    .section-head p { margin: 0; color: var(--muted); font-size: 17px; }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
     .card {
-      margin-top: 52px;
-      padding: 18px;
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      background: rgba(255,255,255,.62);
-      text-align: left;
+      padding: 26px; border: 1px solid var(--line); border-radius: 20px;
+      background: var(--surface); box-shadow: var(--shadow); backdrop-filter: blur(10px);
     }
-    .card strong { display: block; margin-bottom: 5px; font-size: 13px; }
-    .card span { color: var(--muted); font-size: 13px; line-height: 1.55; }
-    footer {
-      min-height: 72px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-top: 1px solid var(--line);
-      color: #9aa19c;
-      font-size: 12px;
+    .card .icon { font-size: 23px; margin-bottom: 17px; }
+    .card h3 { margin: 0 0 8px; font-size: 18px; letter-spacing: -.02em; }
+    .card p { margin: 0; color: var(--muted); font-size: 14px; }
+    .architecture {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: center;
+      padding: 36px; border: 1px solid var(--line); border-radius: 24px;
+      background: var(--surface-strong); box-shadow: var(--shadow);
     }
-    @media (max-width: 640px) {
-      .shell { width: min(100% - 24px, 1120px); }
-      header { height: 72px; }
-      .github { display: none; }
-      main { padding: 54px 0 70px; }
-      .card { margin-top: 38px; }
-      .download { width: 100%; }
+    .diagram { display: grid; gap: 12px; }
+    .node { padding: 15px 17px; border-radius: 14px; border: 1px solid var(--line); background: #faf9f6; font-size: 13px; font-weight: 700; }
+    .node.shared { background: #fff6f1; border-color: #efd4ca; color: #844d3d; }
+    .arrow { text-align: center; color: #a1a7a3; font-size: 18px; }
+    .architecture h3 { margin: 0 0 10px; font-size: 28px; letter-spacing: -.035em; }
+    .architecture p { margin: 0 0 18px; color: var(--muted); }
+    .bullets { display: grid; gap: 9px; color: var(--muted); font-size: 14px; }
+    .bullets span::before { content: "✓"; color: var(--accent); font-weight: 900; margin-right: 9px; }
+    .cta {
+      margin: 42px 0 88px; padding: 38px; border-radius: 24px;
+      display: flex; align-items: center; justify-content: space-between; gap: 24px;
+      background: #1d2521; color: #fff;
+    }
+    .cta h2 { margin: 0 0 8px; font-size: 34px; }
+    .cta p { margin: 0; color: #bfc7c2; }
+    footer { border-top: 1px solid var(--line); padding: 28px 0 44px; color: #8b938e; font-size: 12px; }
+    .foot { display: flex; justify-content: space-between; gap: 18px; align-items: center; }
+    .foot a { text-decoration: none; }
+    @media (max-width: 760px) {
+      .wrap { width: min(100% - 24px, 1160px); }
+      nav { height: 70px; }
+      .navlinks a:not(:last-child) { display: none; }
+      .hero { padding: 68px 0 46px; }
+      section { padding: 54px 0; }
+      .grid, .architecture { grid-template-columns: 1fr; }
+      .architecture { padding: 24px; }
+      .cta { flex-direction: column; align-items: flex-start; padding: 28px; }
+      .cta .btn { width: 100%; }
+      .foot { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <header>
-      <div class="brand"><span class="logo">C</span><span>Créateur d'AO</span></div>
-      <a class="github" href="https://github.com/Alexis-Tissier/createur-ao" target="_blank" rel="noreferrer">GitHub</a>
+  <div class="wrap">
+    <nav>
+      <div class="brand"><span class="logo">C</span><span>Créateur d’AO</span></div>
+      <div class="navlinks">
+        <a href="#fonctionnalites">Fonctionnalités</a>
+        <a href="#architecture">Architecture</a>
+        <a href="https://github.com/Alexis-Tissier/createur-ao" target="_blank" rel="noreferrer">Documentation</a>
+      </div>
+    </nav>
+
+    <header class="hero">
+      <span class="eyebrow">Application Windows · Local-first</span>
+      <h1>Structurez vos appels d’offres. Simplifiez leur suivi.</h1>
+      <p class="lead">Créateur d’AO normalise les dossiers, automatise leur arborescence, facilite les transferts et synchronise le suivi entre plusieurs postes sans imposer de serveur applicatif.</p>
+      <div class="actions">
+        <a class="btn primary" href="https://github.com/Alexis-Tissier/createur-ao/releases">Télécharger pour Windows</a>
+        <a class="btn secondary" href="https://github.com/Alexis-Tissier/createur-ao#readme" target="_blank" rel="noreferrer">Lire la documentation</a>
+      </div>
+      <div class="hero-meta">Windows 10/11 · Installation utilisateur · Déploiement serveur possible</div>
     </header>
 
     <main>
-      <section class="hero">
-        <span class="eyebrow" id="version">Application Windows</span>
-        <h1>Créateur d'AO</h1>
-        <p class="lead">Créez une arborescence d'appel d'offres normalisée, conservez le suivi et retrouvez vos informations au même endroit.</p>
-
-        <div class="actions">
-          <a class="download" href="https://github.com/Alexis-Tissier/createur-ao/releases/latest/download/Createur-AO-Setup.exe">
-            Télécharger pour Windows
-          </a>
+      <section id="fonctionnalites">
+        <div class="section-head">
+          <div class="kicker">Workflow</div>
+          <h2>Un même outil du premier dossier au résultat final.</h2>
+          <p>Les opérations répétitives restent dans le logiciel, tandis que les fichiers continuent à vivre dans les emplacements choisis par l’organisation.</p>
         </div>
-        <div class="meta">Windows 10/11 · Installation utilisateur</div>
-
-        <div class="card">
-          <strong>Toujours la dernière version</strong>
-          <span>Le bouton de téléchargement pointe automatiquement vers le dernier installateur publié dans GitHub Releases.</span>
+        <div class="grid">
+          <article class="card"><div class="icon">01</div><h3>Création normalisée</h3><p>Convention de nommage cohérente, arborescence configurable et génération physique des dossiers en quelques secondes.</p></article>
+          <article class="card"><div class="icon">02</div><h3>Transfert maîtrisé</h3><p>Sélection native Windows, relecture des informations, renommage et déplacement vers les destinations configurées.</p></article>
+          <article class="card"><div class="icon">03</div><h3>Suivi partagé</h3><p>À attribuer, En cours, Envoyé, Gagné ou Perdu : l’état des dossiers est lisible sans parcourir manuellement le serveur.</p></article>
+          <article class="card"><div class="icon">04</div><h3>Historique et données utiles</h3><p>Contacts, prix, remarques, relances et journal des actions restent disponibles depuis une vue centralisée.</p></article>
         </div>
       </section>
+
+      <section id="architecture">
+        <div class="section-head">
+          <div class="kicker">Architecture</div>
+          <h2>Rapide localement, collaboratif sur le réseau.</h2>
+          <p>Chaque poste conserve sa propre base SQLite. Le partage réseau transporte uniquement des événements légers, pas une base ouverte simultanément par tout le monde.</p>
+        </div>
+        <div class="architecture">
+          <div class="diagram">
+            <div class="node">Poste A · Electron + SQLite local</div>
+            <div class="arrow">↕</div>
+            <div class="node shared">Dossier partagé · Journal d’événements</div>
+            <div class="arrow">↕</div>
+            <div class="node">Poste B · Electron + SQLite local</div>
+          </div>
+          <div>
+            <h3>Local-first par conception.</h3>
+            <p>Cette approche permet de conserver une interface fluide, de limiter les accès réseau et de s’intégrer à une infrastructure de fichiers Windows existante.</p>
+            <div class="bullets">
+              <span>Pas de serveur applicatif obligatoire</span>
+              <span>Pas de dépendance cloud pour le fonctionnement normal</span>
+              <span>Base utilisateur locale</span>
+              <span>Synchronisation multi-postes via un simple partage</span>
+              <span>Déploiement possible sans droits administrateur</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="kicker">Déploiement</div>
+          <h2>Installer une fois, ou distribuer depuis un serveur.</h2>
+          <p>L’application peut être installée classiquement ou copiée automatiquement depuis une référence centralisée vers le profil local de chaque utilisateur.</p>
+        </div>
+        <div class="grid">
+          <article class="card"><h3>Installation Windows</h3><p>Un installateur utilisateur crée les raccourcis nécessaires sans dépendre d’une installation système globale.</p></article>
+          <article class="card"><h3>Distribution centralisée</h3><p>Un lanceur réseau synchronise les fichiers applicatifs vers <code>%LOCALAPPDATA%</code>, puis démarre la copie locale.</p></article>
+        </div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <div class="kicker">Confidentialité</div>
+          <h2>Vos données restent dans vos emplacements.</h2>
+          <p>Le dépôt ne contient aucun chemin métier requis pour faire fonctionner le produit. Destinations, arborescences et partages sont choisis lors de la configuration.</p>
+        </div>
+      </section>
+
+      <div class="cta">
+        <div>
+          <h2>Découvrir Créateur d’AO</h2>
+          <p>Consultez la documentation technique ou récupérez le paquet Windows depuis GitHub.</p>
+        </div>
+        <a class="btn primary" href="https://github.com/Alexis-Tissier/createur-ao/releases">Téléchargements</a>
+      </div>
     </main>
 
-    <footer>Créateur d'AO</footer>
+    <footer>
+      <div class="foot">
+        <span>Créateur d’AO · Logiciel propriétaire · Tous droits réservés.</span>
+        <a href="https://github.com/Alexis-Tissier/createur-ao/blob/main/LICENSE" target="_blank" rel="noreferrer">Licence</a>
+      </div>
+    </footer>
   </div>
-
-  <script>
-    fetch('https://api.github.com/repos/Alexis-Tissier/createur-ao/releases/latest', {
-      headers: { 'Accept': 'application/vnd.github+json' }
-    })
-      .then((response) => response.ok ? response.json() : null)
-      .then((release) => {
-        if (release?.tag_name) document.getElementById('version').textContent = `Version ${release.tag_name.replace(/^v/, '')}`;
-      })
-      .catch(() => {});
-  </script>
 </body>
 </html>

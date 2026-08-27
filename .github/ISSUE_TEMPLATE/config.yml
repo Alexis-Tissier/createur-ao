@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/Alexis-Tissier/createur-ao#readme
+    about: Consultez la documentation avant d’ouvrir une nouvelle demande.
